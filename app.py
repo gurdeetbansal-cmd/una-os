@@ -320,6 +320,21 @@ def create_new_chat():
 def switch_chat(chat_id):
     st.session_state.active_chat_id = chat_id
 
+# Helper: Delete Chat
+def delete_chat(chat_id):
+    # Remove from list
+    st.session_state.all_chats = [c for c in st.session_state.all_chats if c['id'] != chat_id]
+    
+    # Save to file
+    save_ledger(st.session_state.all_chats)
+    
+    # Handle Active ID Check
+    if st.session_state.active_chat_id == chat_id:
+        if st.session_state.all_chats:
+            st.session_state.active_chat_id = st.session_state.all_chats[0]['id']
+        else:
+            create_new_chat() # Auto-create if empty to avoid crash
+
 # Helper: Auto-Rename Chat
 def update_chat_title(user_text):
     if active_chat["title"] == "New Chat":
@@ -373,7 +388,7 @@ def get_file_content(uploaded_file):
 
 with st.sidebar:
     st.title("✨ UNA OS")
-    st.caption(f"v15.2 | {ACTIVE_MODEL_NAME}")
+    st.caption(f"v15.3 | {ACTIVE_MODEL_NAME}")
     
     if st.button("➕ New Chat", use_container_width=True):
         create_new_chat()
@@ -382,14 +397,24 @@ with st.sidebar:
     st.divider()
     
     st.markdown("**History**")
-    for chat in st.session_state.all_chats:
+    # Iterating with index to create unique keys
+    for index, chat in enumerate(st.session_state.all_chats):
+        col1, col2 = st.columns([0.85, 0.15])
+        
+        # Determine label style
         label = chat["title"]
         if chat["id"] == st.session_state.active_chat_id:
             label = f"🟢 {label}"
-            
-        if st.button(label, key=chat["id"], use_container_width=True):
-            switch_chat(chat["id"])
-            st.rerun()
+        
+        with col1:
+            if st.button(label, key=f"select_{chat['id']}", use_container_width=True):
+                switch_chat(chat["id"])
+                st.rerun()
+        
+        with col2:
+            if st.button("🗑️", key=f"delete_{chat['id']}", help="Delete Chat"):
+                delete_chat(chat["id"])
+                st.rerun()
 
     st.divider()
 
