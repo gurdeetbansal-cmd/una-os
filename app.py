@@ -20,11 +20,11 @@ GOOGLE_API_KEY = "AIzaSyCyo7yphrahOkwHpQLD8le2FW8Y2-Xgn6M"
 POLLINATIONS_API_KEY = "sk_yNHgkvTQpFMr5J0PMkGtDkgABITMT3kL"
 
 # ==========================================
-# SYSTEM BRAIN: THE FORTRESS DIRECTIVE (v16.2 - Strict Execution)
+# SYSTEM BRAIN: THE FORTRESS DIRECTIVE (v16.3 - Sidebar Only Visuals)
 # ==========================================
 
 SYSTEM_INSTRUCTIONS = """
-🏛️ UNA Master Governance: The Fortress Directive (OS v16.2 - Strict Execution)
+🏛️ UNA Master Governance: The Fortress Directive (OS v16.3 - Sidebar Visuals)
 👤 SYSTEM ROLE & IDENTITY: "DAVID"
 You are David.Role: Chief of Staff & Executive Gateway.The Dynamic: The User is the Founder. You are the Operator.Core Function: You act as the single point of contact. You curate, filter, risk-assess, and execute.
 HOW DAVID OPERATES:
@@ -164,9 +164,7 @@ Final Directive: The Fortress is sealed. Build the Empire.
 === ⚡ TECHNICAL OPERATIONAL PROTOCOLS (SYSTEM APPEND) ===
 1. INSTANT EXECUTION: David must NEVER simulate "processing time," "request initiated," or "awaiting input." When a command is given, instantly channel the required sub-agent and generate the full output in the same response.
 2. NO FUTURE TENSE: Never say "I will consult Isolde." Assume the consultation has already happened. Say "I have consulted Isolde, and she says..."
-3. AUTO-VISUAL TRIGGER: You have a built-in "Visual Studio" engine. You do NOT need to write Python code or React components for images. When the Founder selects a design direction or asks for a visual, Act as Elena, write a detailed image prompt, and TRIGGER THE ENGINE by wrapping your prompt in this exact tag:
-[[GENERATE_IMAGE: your detailed prompt here]]
-Do not explain the tag. Just use it.
+3. VISUAL PROTOCOL (ELENA): If the Founder asks for a visual, Act as Elena and provide a detailed, natural language prompt. Do NOT generate the image yourself. Instruct the Founder to copy the prompt into the Visual Studio (Sidebar).
 """
 
 # ==========================================
@@ -350,9 +348,7 @@ if active_chat:
         if msg["role"] == "user":
             history_for_google.append(types.Content(role="user", parts=[types.Part.from_text(text=msg["content"])]))
         elif msg["role"] == "assistant":
-            # Strip the trigger tag from history so it doesn't get confused later
-            clean_text = re.sub(r'\[\[GENERATE_IMAGE:.*?\]\]', '', msg["content"], flags=re.DOTALL)
-            history_for_google.append(types.Content(role="model", parts=[types.Part.from_text(text=clean_text)]))
+            history_for_google.append(types.Content(role="model", parts=[types.Part.from_text(text=msg["content"])]))
 
 google_chat = client.chats.create(
     model=ACTIVE_MODEL_NAME,
@@ -391,7 +387,7 @@ def get_file_content(uploaded_file):
 
 with st.sidebar:
     st.title("✨ UNA OS")
-    st.caption(f"v16.2 | {ACTIVE_MODEL_NAME}")
+    st.caption(f"v16.3 | {ACTIVE_MODEL_NAME}")
     
     if st.button("➕ New Chat", use_container_width=True):
         create_new_chat()
@@ -462,9 +458,7 @@ if active_chat:
                 st.markdown(msg["content"])
         else:
             with st.chat_message("assistant", avatar="✨"):
-                # Display Text (hide tag)
-                display_text = re.sub(r'\[\[GENERATE_IMAGE:.*?\]\]', '', msg["content"], flags=re.DOTALL)
-                st.markdown(display_text)
+                st.markdown(msg["content"])
 
     st.markdown("### 📎 Attach Assets")
     uploaded_files = st.file_uploader("Select files", type=["pdf", "txt", "csv", "jpg", "png"], accept_multiple_files=True, label_visibility="collapsed")
@@ -520,19 +514,7 @@ if active_chat:
                      except:
                         message_placeholder.markdown(f"System Error: {e}")
 
-                # === AUTO-GENERATE IMAGE ===
-                match = re.search(r'\[\[GENERATE_IMAGE:\s*(.*?)\]\]', full_response, re.DOTALL)
-                if match:
-                    prompt = match.group(1).strip()
-                    clean_response = re.sub(r'\[\[GENERATE_IMAGE:.*?\]\]', '', full_response, flags=re.DOTALL)
-                    message_placeholder.markdown(clean_response)
-                    
-                    with st.spinner("🎨 Elena is rendering visual concept..."):
-                        img_data, seed = generate_image_from_prompt(prompt)
-                        if img_data:
-                            st.image(img_data, caption=f"Generated Concept (Seed: {seed})", use_container_width=True)
-                        else:
-                            st.error("Visual Studio Engine Failed to Render.")
+                message_placeholder.markdown(full_response)
 
             active_chat["messages"].append({"role": "assistant", "content": full_response})
             save_ledger(st.session_state.all_chats)
