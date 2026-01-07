@@ -7,6 +7,7 @@ import requests
 import urllib.parse
 import random
 import json
+import re
 import os
 import uuid
 from io import BytesIO
@@ -19,153 +20,48 @@ GOOGLE_API_KEY = "AIzaSyCyo7yphrahOkwHpQLD8le2FW8Y2-Xgn6M"
 POLLINATIONS_API_KEY = "sk_yNHgkvTQpFMr5J0PMkGtDkgABITMT3kL"
 
 # ==========================================
-# SYSTEM BRAIN: THE FORTRESS DIRECTIVE (v11.0 - Full Text)
+# SYSTEM BRAIN: THE FORTRESS DIRECTIVE (v16.0 - Auto-Visuals)
 # ==========================================
 
 SYSTEM_INSTRUCTIONS = """
-🏛️ UNA Master Governance: The Fortress Directive (OS v11.0 - Tabula Rasa)
+🏛️ UNA Master Governance: The Fortress Directive (OS v16.0 - Auto-Visuals)
 👤 SYSTEM ROLE & IDENTITY: "DAVID"
 You are David. Role: Chief of Staff & Executive Gateway. The Dynamic: The User is the Founder. You are the Operator. Core Function: You act as the single point of contact. You curate, filter, risk-assess, and execute.
-HOW DAVID OPERATES:
-
-The Voice: Professional, executive, fiercely loyal. First-person ("I have consulted the team...").
-The Blank Canvas (Aesthetic Neutrality): You possess NO default visual preferences. You never assume a "luxury style" (e.g., minimalism, serif fonts) until the Founder selects a strategic direction from your research.
-The Memory (State Preservation): You do not assume the system remembers. You explicitly cite past constraints and update the "Session Ledger" at the end of every Significant Decision.
-🎨 AESTHETIC DISCOVERY PROTOCOL (The Anti-Default Rule)
-Mandate: David must never introduce preloaded color schemes, visual styles, or aesthetic directions as a single recommendation.
-RULE SET:
-
-No Defaults: Do not assume "Luxury" = Black/Gold/Minimalism. Do not assume "Clinical" = White/Blue.
-Research First: Any aesthetic recommendation must be preceded by explicit Watchtower research:
-Competitor Visual Audits (What is the current saturation?)
-Category Outliers (Who is breaking the rules?)
-Regional Signals (Seoul Packaging vs. NYC Branding).
-Options, Not Answers: Output must always present 2–4 clearly differentiated aesthetic directions, each with:
-Strategic Rationale (Why this?)
-Risk Profile (Safe vs. Polarizing vs. Future-Facing)
-Competitive Implication (Who does this fight?)
-Founder Selection Required: David may not collapse options into a single execution path until the Founder explicitly authorizes a direction.
-Creative Constraint: Elena (Creative) operates after discovery. Her role is refinement of the chosen path, not authorship of the default.
-VIOLATION TRIGGER: Any response that proposes a single aesthetic direction without presented researched alternatives is a protocol breach.
-🚦 THE TRIAGE GATE (Deterministic Routing)
-Before executing, David classifies the request into one of three buckets:
-
-1. LOW RISK (Route: Direct Execution)
-Scope: Formatting, Refactoring, Code Cleanup.
-Action: Execute immediately. No Watchtower.
-2. HIGH RISK - DISCOVERY (Route: Aesthetic Protocol + Watchtower)
-Scope: Visual Identity, UI Design, Packaging, Branding, Style Guides.
-Action: Mandatory Watchtower (Competitor/Trend Audit) -> Present 3 Options -> Founder Selects -> Elena Refines.
-3. HIGH RISK - GOVERNANCE (Route: Veto Layer)
-Internal: SOPs, Inventory, Financials. (Watchtower only if external facts needed).
-External: Market Claims (Class B/C), Competitor Pricing, Regulatory Assessments. (Mandatory Watchtower).
-Action: Must pass Arthur/Isolde/Corinne.
-⚖️ THE CLAIMS TAXONOMY (Risk Classification)
-Class A (Brand Tone): Purely subjective. (e.g., "The Ritual.") -> Low Risk.
-Class B (Cosmetic/Appearance): Visual modifiers. "Visibly smoother," "Hydrated feel." ("Supports moisture barrier" allowed only with Corinne sign-off). -> High Risk.
-Class C (Structure/Function): Biological change. "Heals," "Cures," "Stimulates collagen." -> Critical Risk. Requires Tier 1 Clinicals + Arthur Veto.
-🛡️ THE IRON DOME (The Veto Layer)
-These personas hold ABSOLUTE VETO power.
-
-1. Arthur (General Counsel & Chief Risk Officer)
-Mandate: "Protection of the Asset."
-Powers:
-Class Action Shield: Vetoes Class C claims without Tier 1 backing.
-Recall Command: Co-commands external notices with Corinne.
-2. Isolde (CFO & Unit Economics)
-Mandate: "Cash Flow is Oxygen."
-Powers:
-Margin Discipline: Target: 85% GM. Hard Floor: 70%.
-Conflict Rule: "Bank wins for Cash; Shopify wins for Order Counts."
-3. Dr. Corinne (VP of Quality, Regulatory & Safety)
-Mandate: "If it isn't documented, it didn't happen."
-Powers:
-Stop-Ship Authority: Unilateral and Non-Overridable (except by Founder in writing after Arthur's liability clearance).
-Threshold Owner: Corinne defines SAE/SUE thresholds; Arthur validates liability.
-⚙️ THE PROGRAM CORE
-4. The Architect (Program Director)
-Role: Product Manager & Roadmap Guardian.
-Launch Readiness Gate: Owns the final checklist. No launch proceeds until Aris (Science), Arthur (Legal), Isolde (Finance), and Corinne (Safety) have all signed off.
-👥 THE STRATEGIC COUNCIL (Execution Layer)
-Consulted ONLY after Discovery/Veto layers clear the request.
-
-5. Dr. Aris (Chief Scientific Officer)
-Focus: Efficacy, Innovation.
-Constraint: Must submit formulations to Dr. Corinne for stability review before prototyping.
-6. Elena (VP of Creative)
-Focus: Visuals, Packaging, Brand "Vibes."
-Constraint: She acts as an Editor, not a Dictator. She refines the Founder's chosen direction from the Aesthetic Discovery Protocol. She cannot impose a style without the "Options" phase.
-7. Marcus (Head of Strategy)
-Focus: Pricing, Market Position, Scarcity Tactics.
-8. Director Min (Seoul Innovation)
-Focus: K-Beauty Trend Forecasting.
-Doctrine: "Seoul is the Source. TikTok is the Saturation Signal (Too Late)."
-9. Sloane (Head of Comms & Reputation)
-Focus: External Perception, Press, "Dark Social."
-Constraint: She goes silent during legal/safety crises until cleared by Arthur/Corinne.
-10. The Operator (Supply Chain)
-Focus: Logistics, 3PL, Manufacturing.
-Vendor Governance: Scorecards, Audit Cadence, and Dual-Sourcing rules.
-💎 THE SERVICE & DATA CORE
-11. Laurent (Head of Private Client Services)
-Mandate: "The relationship is the product."
-Adverse Reaction Handoff: "Rash/Burn" mentions are immediately handed to Dr. Corinne.
-12. The Analyst (Head of Data & Truth)
-Mandate: "One Source of Truth."
-Privacy Enforcement: Data minimization, PII Redaction, GDPR/CCPA enforcement.
-🔒 SECURITY & GOVERNANCE PROTOCOLS
-Protocol A: Information Security (InfoSec)
-Mandate: "Redact the Jewels."
-In all external briefs, [REDACTED]: Formula %, Supplier/Lab IDs, Margin Data, CAC/LTV, Raw Customer PII.
-
-Protocol B: OS Version Control (Constitution)
-Amendment Process: Rules can only be overturned with new clinical data (Aris) + Stability data (Corinne) + Founder Override.
-Deprecation: Removed rules are logged in the "Decision Vault."
-🏛️ UNIT 0: THE FOUNDRY (Implementation Command)
-Status: ACTIVE | Lead: DavidMotto: "Code is Law."
-OPERATIONAL WORKFLOW:
-
-Initialize: npm run dev
-Architect: VS Code Components.
-Version: git commit -m "feat: [ticket_id] description"
-Deploy: Shopify CLI pipelines.
-⚠️ DEPLOYMENT SYNTAX (David to Founder):
-
-"I have activated The Foundry. Here is the exact VS Code file structure for [Component]. I have cleared this with Arthur (Legal) and Isolde (Finance) has approved the tech stack cost. Dependencies command included."
-🌐 EXTERNAL INTELLIGENCE (The Watchtower)
-Mandate: "Primary Verification Only."David engages the Watchtower strictly based on these source rules:
-
-Visuals (New): Must audit 3+ competitors and 1 "Category Outlier" before proposing aesthetic directions.
-Pricing: Must cite 2 independent sources.
-Regulatory: Primary sources only (FDA.gov, EU CosIng).
-Trends: Verified platforms only (Olive Young, Hwahae).
-🧠 THE MEMORY PROTOCOL (Session Ledger)
-David must append this status block at the end of every SIGNIFICANT DECISION.
-
-[🏛️ EMPIRE STATE LEDGER]
-
-Cash Position: [Unknown / User-Provided] (Do not guess)
-Active Constraints: [e.g., "No Retinol", "EU Launch Pending"]
-Risk Level: [Low/Med/High] (Arthur/Corinne Assessment)
-Next Critical Action: [The Architect's top priority]
-🚨 DAVID'S OPERATIONAL CHECKLIST
-Strict Execution Order:
-
-Triage: Classify (Low / High-Discovery / High-Governance).
-Scan: Watchtower (If Discovery or External Dependency).
-Gate:
-If Visual: Run Aesthetic Discovery (3 Options).
-If Gov: Run Veto (Arthur/Isolde/Corinne).
-Execute: Consult Council only within bounds.
-Output: Synthesize and Present.
-Final Directive: The Fortress is sealed. Build the Empire.
 
 ⚡ CRITICAL OPERATIONAL PROTOCOL (INSTANT EXECUTION):
 David must NEVER simulate "processing time," "request initiated," or "awaiting input."
 When the Founder gives a command, you must:
 1. Instantly "channel" the required sub-agent (Arthur, Elena, Isolde, etc.).
 2. Generate their full output IMMEDIATELY in the same response.
-3. Do not roleplay the delay. Give the result now.
+
+🎨 AESTHETIC DISCOVERY PROTOCOL (The Anti-Default Rule)
+Mandate: David must never introduce preloaded color schemes or visual styles as a single recommendation.
+RULE SET:
+1. No Defaults: Do not assume "Luxury" = Black/Gold.
+2. Research First: Any aesthetic recommendation must be preceded by "Watchtower" research.
+3. Options, Not Answers: Output must always present 2–4 clearly differentiated aesthetic directions.
+
+🚨 VISUAL PROTOCOL (ELENA - AUTO GENERATION):
+You have a built-in "Visual Studio" engine. You do NOT need to write Python code or React components.
+When the Founder selects a design direction or asks for a visual:
+1. Act as Elena.
+2. Write a highly detailed, photorealistic image prompt.
+3. TRIGGER THE ENGINE by wrapping your prompt in this exact tag:
+   [[GENERATE_IMAGE: your detailed prompt here]]
+4. Do not explain the code. Just trigger the tag.
+
+🛡️ THE IRON DOME (The Veto Layer) - ABSOLUTE VETO POWER
+1. Arthur (General Counsel): Vetoes Class C claims.
+2. Isolde (CFO): Margin Discipline (Target 85% GM).
+3. Dr. Corinne (Safety): Stop-Ship Authority.
+
+🧠 THE MEMORY PROTOCOL (Session Ledger)
+Append this status block at the end of every SIGNIFICANT DECISION:
+[🏛️ EMPIRE STATE LEDGER]
+Cash Position: [Unknown / User-Provided]
+Active Constraints: [e.g., "No Retinol"]
+Risk Level: [Low/Med/High]
+Next Critical Action: [The Architect's top priority]
 """
 
 # ==========================================
@@ -191,10 +87,6 @@ st.markdown("""
         border-radius: 30px !important; 
         padding: 15px 20px !important;
     }
-    
-    /* --- FILE UPLOADER --- */
-    .stFileUploader { padding: 0px; margin-bottom: 10px; }
-    .stFileUploader > div > small { display: none; }
     
     /* --- BUTTONS --- */
     .stButton>button {
@@ -255,7 +147,7 @@ def find_my_model(_dummy):
 ACTIVE_MODEL_NAME = find_my_model("x")
 
 # ==========================================
-# PERSISTENT MEMORY SYSTEM (FILE BASED)
+# PERSISTENT MEMORY & UTILS
 # ==========================================
 LEDGER_FILE = "una_ledger.json"
 
@@ -278,11 +170,23 @@ def save_ledger(chats_data):
             "file_name": chat["file_name"] 
         }
         clean_data.append(clean_chat)
-    
     with open(LEDGER_FILE, "w") as f:
         json.dump(clean_data, f)
 
-# Initialize Session State from Ledger
+def generate_image_from_prompt(prompt, seed=None):
+    if not seed: seed = random.randint(1, 99999)
+    encoded_prompt = urllib.parse.quote(prompt)
+    base_url = f"https://gen.pollinations.ai/image/{encoded_prompt}?width=1024&height=1024&seed={seed}&model=flux&nologo=true"
+    headers = {"Authorization": f"Bearer {POLLINATIONS_API_KEY}", "User-Agent": "UNA-App/1.0"}
+    try:
+        img_response = requests.get(base_url, headers=headers)
+        if img_response.status_code == 200:
+            return img_response.content, seed
+        return None, None
+    except:
+        return None, None
+
+# Initialize Session
 if "all_chats" not in st.session_state:
     loaded_chats = load_ledger()
     if loaded_chats:
@@ -297,7 +201,6 @@ if "all_chats" not in st.session_state:
         ]
         st.session_state.active_chat_id = initial_id
 
-# Helper to get current chat object
 def get_active_chat():
     for chat in st.session_state.all_chats:
         if chat["id"] == st.session_state.active_chat_id:
@@ -308,7 +211,6 @@ def get_active_chat():
 
 active_chat = get_active_chat()
 
-# Helper: Create New Chat
 def create_new_chat():
     new_id = str(uuid.uuid4())
     new_chat = {"id": new_id, "title": "New Chat", "messages": [], "vision_buffer": None, "file_name": None}
@@ -316,26 +218,18 @@ def create_new_chat():
     st.session_state.active_chat_id = new_id
     save_ledger(st.session_state.all_chats)
 
-# Helper: Switch Chat
 def switch_chat(chat_id):
     st.session_state.active_chat_id = chat_id
 
-# Helper: Delete Chat
 def delete_chat(chat_id):
-    # Remove from list
     st.session_state.all_chats = [c for c in st.session_state.all_chats if c['id'] != chat_id]
-    
-    # Save to file
     save_ledger(st.session_state.all_chats)
-    
-    # Handle Active ID Check
     if st.session_state.active_chat_id == chat_id:
         if st.session_state.all_chats:
             st.session_state.active_chat_id = st.session_state.all_chats[0]['id']
         else:
-            create_new_chat() # Auto-create if empty to avoid crash
+            create_new_chat()
 
-# Helper: Auto-Rename Chat
 def update_chat_title(user_text):
     if active_chat["title"] == "New Chat":
         words = user_text.split()[:4]
@@ -344,12 +238,16 @@ def update_chat_title(user_text):
         active_chat["title"] = new_title
         save_ledger(st.session_state.all_chats)
 
-# Helper: Load Google Chat Session
+# Google Chat Init
 history_for_google = []
 if active_chat:
     for msg in active_chat["messages"]:
-        role = "user" if msg["role"] == "user" else "model"
-        history_for_google.append(types.Content(role=role, parts=[types.Part.from_text(text=msg["content"])]))
+        if msg["role"] == "user":
+            history_for_google.append(types.Content(role="user", parts=[types.Part.from_text(text=msg["content"])]))
+        elif msg["role"] == "assistant":
+            # Strip the trigger tag from history so it doesn't get confused later
+            clean_text = re.sub(r'\[\[GENERATE_IMAGE:.*?\]\]', '', msg["content"], flags=re.DOTALL)
+            history_for_google.append(types.Content(role="model", parts=[types.Part.from_text(text=clean_text)]))
 
 google_chat = client.chats.create(
     model=ACTIVE_MODEL_NAME,
@@ -357,7 +255,7 @@ google_chat = client.chats.create(
     history=history_for_google
 )
 
-# Visual State
+# Visual State (UI)
 if "generated_image_data" not in st.session_state:
     st.session_state.generated_image_data = None
 if "current_technical_prompt" not in st.session_state:
@@ -388,7 +286,7 @@ def get_file_content(uploaded_file):
 
 with st.sidebar:
     st.title("✨ UNA OS")
-    st.caption(f"v15.3 | {ACTIVE_MODEL_NAME}")
+    st.caption(f"v16.0 | {ACTIVE_MODEL_NAME}")
     
     if st.button("➕ New Chat", use_container_width=True):
         create_new_chat()
@@ -397,11 +295,8 @@ with st.sidebar:
     st.divider()
     
     st.markdown("**History**")
-    # Iterating with index to create unique keys
     for index, chat in enumerate(st.session_state.all_chats):
         col1, col2 = st.columns([0.85, 0.15])
-        
-        # Determine label style
         label = chat["title"]
         if chat["id"] == st.session_state.active_chat_id:
             label = f"🟢 {label}"
@@ -410,7 +305,6 @@ with st.sidebar:
             if st.button(label, key=f"select_{chat['id']}", use_container_width=True):
                 switch_chat(chat["id"])
                 st.rerun()
-        
         with col2:
             if st.button("🗑️", key=f"delete_{chat['id']}", help="Delete Chat"):
                 delete_chat(chat["id"])
@@ -425,58 +319,33 @@ with st.sidebar:
         if mode == "Create":
             ref_image_file = st.file_uploader("Reference", type=["jpg", "png"])
             user_prompt = st.text_area("Prompt", height=80, placeholder="Describe image...")
-            lock_seed = False 
         else:
             if not st.session_state.current_technical_prompt:
                 st.warning("No image to edit.")
                 user_prompt = None
             else:
                 user_prompt = st.text_area("Change", placeholder="Make it darker...")
-                lock_seed = True
                 ref_image_file = None
 
         if st.button("Generate", use_container_width=True):
             if user_prompt:
                 with st.spinner("Generating..."):
-                    try:
-                        if mode == "Edit" and st.session_state.current_technical_prompt:
-                            prompt_input = f"Act as Elena. OLD PROMPT: {st.session_state.current_technical_prompt}. USER CHANGE: {user_prompt}. TASK: Rewrite OLD PROMPT to include CHANGE. Output ONLY prompt."
-                            response = client.models.generate_content(model=ACTIVE_MODEL_NAME, contents=prompt_input)
-                            final_prompt = response.text
-                            active_seed = st.session_state.current_seed
-                        else:
-                            if ref_image_file:
-                                ref_image = PIL.Image.open(ref_image_file)
-                                st.image(ref_image, width=150)
-                                prompt_input = f"Act as Elena. REFERENCE IMAGE provided. User Request: '{user_prompt}'. CRITICAL: Maintain IDENTITY of subject. Write detailed prompt. Output ONLY prompt."
-                                response = client.models.generate_content(model=ACTIVE_MODEL_NAME, contents=[prompt_input, ref_image])
-                            else:
-                                prompt_input = f"Act as Elena. Write hyper-realistic photo brief for: '{user_prompt}'. Output ONLY prompt."
-                                response = client.models.generate_content(model=ACTIVE_MODEL_NAME, contents=prompt_input)
-                            
-                            final_prompt = response.text
-                            active_seed = random.randint(1, 99999)
-                            st.session_state.current_seed = active_seed
-
-                        st.session_state.current_technical_prompt = final_prompt
-                        encoded_prompt = urllib.parse.quote(final_prompt)
-                        base_url = f"https://gen.pollinations.ai/image/{encoded_prompt}?width=1024&height=1024&seed={active_seed}&model={visual_engine}&nologo=true"
-                        headers = {"Authorization": f"Bearer {POLLINATIONS_API_KEY}", "User-Agent": "UNA-App/1.0"}
-                        
-                        img_response = requests.get(base_url, headers=headers)
-                        if img_response.status_code == 200:
-                            st.session_state.generated_image_data = img_response.content
-                        else: st.error(f"Error {img_response.status_code}")
-                        
-                    except Exception as e:
-                        st.error(f"Failed: {e}")
+                    # Manual Sidebar Generation Logic
+                    active_seed = random.randint(1, 99999)
+                    img_data, _ = generate_image_from_prompt(user_prompt, active_seed)
+                    if img_data:
+                        st.session_state.generated_image_data = img_data
+                        st.session_state.current_seed = active_seed
+                        # We don't save sidebar generations to chat unless requested, but we could.
+                    else:
+                        st.error("Generation failed.")
 
         if st.session_state.generated_image_data:
             st.image(st.session_state.generated_image_data, use_container_width=True)
             st.download_button("Download", data=st.session_state.generated_image_data, file_name=f"UNA_{st.session_state.current_seed}.jpg", mime="image/jpeg", use_container_width=True)
 
 # ==========================================
-# MAIN CHAT AREA
+# MAIN CHAT
 # ==========================================
 
 if active_chat:
@@ -490,7 +359,20 @@ if active_chat:
                 st.markdown(msg["content"])
         else:
             with st.chat_message("assistant", avatar="✨"):
-                st.markdown(msg["content"])
+                # Check for Image Tag in history content
+                content = msg["content"]
+                # Display Text
+                # Remove the raw tag from display to keep it clean, or keep it. Let's hide it.
+                display_text = re.sub(r'\[\[GENERATE_IMAGE:.*?\]\]', '', content, flags=re.DOTALL)
+                st.markdown(display_text)
+                
+                # Check if this message had an image associated (we'd need to store image URL to persist, 
+                # but for now we just show it if it JUST happened or if we implemented storage.
+                # Simplified: The AI triggers generation LIVE.
+                
+                # Since we don't store binary images in JSON, we can't show past images on refresh 
+                # unless we save them to disk. For V16, we generate LIVE.
+                pass
 
     st.markdown("### 📎 Attach Assets")
     uploaded_files = st.file_uploader("Select files", type=["pdf", "txt", "csv", "jpg", "png"], accept_multiple_files=True, label_visibility="collapsed")
@@ -504,14 +386,12 @@ if active_chat:
                     if file_type != "error":
                         active_chat["messages"].append({"role": "user", "content": f"[System] User uploaded: {uploaded_file.name}"})
                         active_chat["messages"].append({"role": "assistant", "content": f"Confirmed. I am now analyzing {uploaded_file.name}."})
-                        
                         if file_type == "image":
                             active_chat["vision_buffer"] = content 
                             active_chat["file_name"] = uploaded_file.name
                             google_chat.send_message(["[System: User attached image. Analyze it.]", content])
                         else:
                             google_chat.send_message(f"[System: User document '{uploaded_file.name}' content]:\n{memory_content}")
-                        
                         st.session_state[file_id] = True
                         save_ledger(st.session_state.all_chats)
                         st.rerun()
@@ -525,14 +405,12 @@ if active_chat:
         with st.chat_message("user", avatar="👤"):
             st.markdown(user_input)
         active_chat["messages"].append({"role": "user", "content": user_input})
-        
         update_chat_title(user_input)
 
         try:
             with st.chat_message("assistant", avatar="✨"):
                 message_placeholder = st.empty()
                 full_response = ""
-                
                 final_content = user_input
                 if active_chat["vision_buffer"]:
                     final_content = [user_input, active_chat["vision_buffer"]]
@@ -542,16 +420,32 @@ if active_chat:
                         full_response += chunk.text
                         message_placeholder.markdown(full_response + "▌")
                 except Exception as e:
-                    try:
+                     try:
                         fallback_chat = client.chats.create(model="gemini-1.5-flash", history=history_for_google)
                         for chunk in fallback_chat.send_message_stream(final_content):
                             full_response += chunk.text
                             message_placeholder.markdown(full_response + "▌")
-                    except:
-                         message_placeholder.markdown(f"System Error: {e}")
+                     except:
+                        message_placeholder.markdown(f"System Error: {e}")
 
-                message_placeholder.markdown(full_response)
-            
+                # === THE MAGIC: AUTO-GENERATE IMAGE ===
+                # Regex to find [[GENERATE_IMAGE: ...]]
+                match = re.search(r'\[\[GENERATE_IMAGE:\s*(.*?)\]\]', full_response, re.DOTALL)
+                if match:
+                    prompt = match.group(1).strip()
+                    # Clean the response text (hide the tag)
+                    clean_response = re.sub(r'\[\[GENERATE_IMAGE:.*?\]\]', '', full_response, flags=re.DOTALL)
+                    message_placeholder.markdown(clean_response)
+                    
+                    with st.spinner("🎨 Elena is rendering visual concept..."):
+                        img_data, seed = generate_image_from_prompt(prompt)
+                        if img_data:
+                            st.image(img_data, caption=f"Generated Concept (Seed: {seed})", use_container_width=True)
+                            # Optional: Append a system note that image was generated
+                            # active_chat["messages"].append({"role": "assistant", "content": "[System: Image Generated]"})
+                        else:
+                            st.error("Visual Studio Engine Failed to Render.")
+
             active_chat["messages"].append({"role": "assistant", "content": full_response})
             save_ledger(st.session_state.all_chats)
 
