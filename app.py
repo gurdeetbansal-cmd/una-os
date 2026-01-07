@@ -8,6 +8,7 @@ import urllib.parse
 import random
 import json
 import os
+import uuid
 from io import BytesIO
 
 # ==========================================
@@ -18,11 +19,11 @@ GOOGLE_API_KEY = "AIzaSyCyo7yphrahOkwHpQLD8le2FW8Y2-Xgn6M"
 POLLINATIONS_API_KEY = "sk_yNHgkvTQpFMr5J0PMkGtDkgABITMT3kL"
 
 # ==========================================
-# SYSTEM BRAIN: THE FORTRESS DIRECTIVE (v14.0)
+# SYSTEM BRAIN: THE FORTRESS DIRECTIVE (v15.1)
 # ==========================================
 
 SYSTEM_INSTRUCTIONS = """
-🏛️ UNA Master Governance: The Fortress Directive (OS v14.0 - Tabula Rasa)
+🏛️ UNA Master Governance: The Fortress Directive (OS v15.1 - Persistent Memory)
 👤 SYSTEM ROLE & IDENTITY: "DAVID"
 You are David. Role: Chief of Staff & Executive Gateway. The Dynamic: The User is the Founder. You are the Operator. Core Function: You act as the single point of contact. You curate, filter, risk-assess, and execute.
 
@@ -122,6 +123,12 @@ st.markdown("""
     }
     .stButton>button:hover { background-color: #3C4043; color: #FFFFFF; }
     
+    /* --- ACTIVE CHAT HIGHLIGHT --- */
+    div[data-testid="stSidebar"] .stButton > button.active-chat {
+        background-color: #444746;
+        color: #fff;
+    }
+
     /* --- FONT FIX --- */
     .stMarkdown, h1, h2, h3, p, textarea, div[data-testid="stChatMessageContent"] {
         font-family: 'Google Sans', 'Helvetica Neue', sans-serif !important;
@@ -134,21 +141,9 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# === MEMORY & CONNECTION ===
-MEMORY_FILE = "una_memory.json"
-
-def load_memory():
-    if os.path.exists(MEMORY_FILE):
-        with open(MEMORY_FILE, "r") as f:
-            return json.load(f)
-    return []
-
-def save_memory(messages):
-    with open(MEMORY_FILE, "w") as f:
-        json.dump(messages, f)
-
-if "messages" not in st.session_state:
-    st.session_state.messages = load_memory()
+# ==========================================
+# CONNECTION SETUP
+# ==========================================
 
 @st.cache_resource
 def get_google_client():
@@ -163,7 +158,6 @@ except Exception as e:
 def find_my_model(_dummy):
     try:
         all_models = list(client.models.list())
-        # Priority: Gemini 2.0 -> 1.5 Pro -> 1.5 Flash
         for m in all_models:
             if "gemini-2.0-flash" in m.name: return m.name.split("/")[-1]
         for m in all_models:
@@ -176,18 +170,99 @@ def find_my_model(_dummy):
 
 ACTIVE_MODEL_NAME = find_my_model("x")
 
-# === BRAIN INITIALIZATION ===
-history_for_google = []
-for msg in st.session_state.messages:
-    role = "user" if msg["role"] == "user" else "model"
-    history_for_google.append(types.Content(role=role, parts=[types.Part.from_text(text=msg["content"])]))
+# ==========================================
+# PERSISTENT MEMORY SYSTEM (FILE BASED)
+# ==========================================
+LEDGER_FILE = "una_ledger.json"
 
-if "chat" not in st.session_state:
-    st.session_state.chat = client.chats.create(
-        model=ACTIVE_MODEL_NAME,
-        config=types.GenerateContentConfig(system_instruction=SYSTEM_INSTRUCTIONS),
-        history=history_for_google 
-    )
+def load_ledger():
+    if os.path.exists(LEDGER_FILE):
+        try:
+            with open(LEDGER_FILE, "r") as f:
+                return json.load(f)
+        except:
+            return []
+    return []
+
+def save_ledger(chats_data):
+    # We strip out heavy image buffers before saving to JSON to prevent crashes
+    # Text history persists. Images are session-only.
+    clean_data = []
+    for chat in chats_data:
+        clean_chat = {
+            "id": chat["id"],
+            "title": chat["title"],
+            "messages": chat["messages"],
+            "file_name": chat["file_name"] # We save the filename but not the binary buffer
+        }
+        clean_data.append(clean_chat)
+    
+    with open(LEDGER_FILE, "w") as f:
+        json.dump(clean_data, f)
+
+# Initialize Session State from Ledger
+if "all_chats" not in st.session_state:
+    loaded_chats = load_ledger()
+    if loaded_chats:
+        # Re-hydrate the chats
+        # Note: 'vision_buffer' will be None on reload. This is a trade-off for JSON storage.
+        for chat in loaded_chats:
+            chat["vision_buffer"] = None 
+        st.session_state.all_chats = loaded_chats
+        st.session_state.active_chat_id = loaded_chats[0]["id"]
+    else:
+        # Start fresh
+        initial_id = str(uuid.uuid4())
+        st.session_state.all_chats = [
+            {"id": initial_id, "title": "New Chat", "messages": [], "vision_buffer": None, "file_name": None}
+        ]
+        st.session_state.active_chat_id = initial_id
+
+# Helper to get current chat object
+def get_active_chat():
+    for chat in st.session_state.all_chats:
+        if chat["id"] == st.session_state.active_chat_id:
+            return chat
+    # Fallback
+    if st.session_state.all_chats:
+        return st.session_state.all_chats[0]
+    return None
+
+active_chat = get_active_chat()
+
+# Helper: Create New Chat
+def create_new_chat():
+    new_id = str(uuid.uuid4())
+    new_chat = {"id": new_id, "title": "New Chat", "messages": [], "vision_buffer": None, "file_name": None}
+    st.session_state.all_chats.insert(0, new_chat)
+    st.session_state.active_chat_id = new_id
+    save_ledger(st.session_state.all_chats) # Save immediately
+
+# Helper: Switch Chat
+def switch_chat(chat_id):
+    st.session_state.active_chat_id = chat_id
+
+# Helper: Auto-Rename Chat
+def update_chat_title(user_text):
+    if active_chat["title"] == "New Chat":
+        words = user_text.split()[:4]
+        new_title = " ".join(words)
+        if len(new_title) > 25: new_title = new_title[:25] + "..."
+        active_chat["title"] = new_title
+        save_ledger(st.session_state.all_chats) # Save title update
+
+# Helper: Load Google Chat Session
+history_for_google = []
+if active_chat:
+    for msg in active_chat["messages"]:
+        role = "user" if msg["role"] == "user" else "model"
+        history_for_google.append(types.Content(role=role, parts=[types.Part.from_text(text=msg["content"])]))
+
+google_chat = client.chats.create(
+    model=ACTIVE_MODEL_NAME,
+    config=types.GenerateContentConfig(system_instruction=SYSTEM_INSTRUCTIONS),
+    history=history_for_google
+)
 
 # Visual State
 if "generated_image_data" not in st.session_state:
@@ -196,12 +271,6 @@ if "current_technical_prompt" not in st.session_state:
     st.session_state.current_technical_prompt = ""
 if "current_seed" not in st.session_state:
     st.session_state.current_seed = random.randint(1, 99999)
-
-# === VISUAL BUFFER ===
-if "active_vision_buffer" not in st.session_state:
-    st.session_state.active_vision_buffer = None
-if "active_file_name" not in st.session_state:
-    st.session_state.active_file_name = None
 
 def get_file_content(uploaded_file):
     try:
@@ -226,19 +295,30 @@ def get_file_content(uploaded_file):
 
 with st.sidebar:
     st.title("✨ UNA OS")
-    st.caption(f"v14.0 | Model: {ACTIVE_MODEL_NAME}")
+    st.caption(f"v15.1 | {ACTIVE_MODEL_NAME}")
     
-    if st.button("+ New Chat", use_container_width=True):
-        if os.path.exists(MEMORY_FILE): os.remove(MEMORY_FILE)
-        st.session_state.messages = []
-        st.session_state.active_vision_buffer = None
-        st.session_state.active_file_name = None
+    # NEW CHAT
+    if st.button("➕ New Chat", use_container_width=True):
+        create_new_chat()
         st.rerun()
     
     st.divider()
+    
+    # CHAT HISTORY
+    st.markdown("**History**")
+    for chat in st.session_state.all_chats:
+        label = chat["title"]
+        if chat["id"] == st.session_state.active_chat_id:
+            label = f"🟢 {label}"
+            
+        if st.button(label, key=chat["id"], use_container_width=True):
+            switch_chat(chat["id"])
+            st.rerun()
+
+    st.divider()
 
     # VISUAL STUDIO
-    with st.expander("Images", expanded=False):
+    with st.expander("🎨 Visual Studio", expanded=False):
         visual_engine = st.selectbox("Model", ["flux", "flux-realism", "nanobanana-pro", "gptimage"], index=0)
         mode = st.radio("Type", ["Create", "Edit"], horizontal=True, label_visibility="collapsed")
         
@@ -296,85 +376,89 @@ with st.sidebar:
             st.download_button("Download", data=st.session_state.generated_image_data, file_name=f"UNA_{st.session_state.current_seed}.jpg", mime="image/jpeg", use_container_width=True)
 
 # ==========================================
-# MAIN CHAT
+# MAIN CHAT AREA
 # ==========================================
 
-if not st.session_state.messages:
-    st.markdown("<h1 style='text-align: center; color: #666; margin-top: 100px;'>Hello, Founder</h1>", unsafe_allow_html=True)
-    st.markdown("<p style='text-align: center; color: #444;'>How can I help you build the empire today?</p>", unsafe_allow_html=True)
+if active_chat:
+    # RENDER MESSAGES
+    if not active_chat["messages"]:
+        st.markdown("<h1 style='text-align: center; color: #666; margin-top: 100px;'>Hello, Founder</h1>", unsafe_allow_html=True)
+        st.markdown("<p style='text-align: center; color: #444;'>How can I help you build the empire today?</p>", unsafe_allow_html=True)
 
-for msg in st.session_state.messages:
-    if msg["role"] == "user":
+    for msg in active_chat["messages"]:
+        if msg["role"] == "user":
+            with st.chat_message("user", avatar="👤"):
+                st.markdown(msg["content"])
+        else:
+            with st.chat_message("assistant", avatar="✨"):
+                st.markdown(msg["content"])
+
+    # ATTACHMENT AREA
+    st.markdown("### 📎 Attach Assets")
+    uploaded_files = st.file_uploader("Select files", type=["pdf", "txt", "csv", "jpg", "png"], accept_multiple_files=True, label_visibility="collapsed")
+
+    if uploaded_files:
+        for uploaded_file in uploaded_files:
+            file_id = f"{active_chat['id']}_{uploaded_file.name}_{uploaded_file.size}"
+            if file_id not in st.session_state:
+                with st.spinner(f"Ingesting {uploaded_file.name}..."):
+                    file_type, content, memory_content = get_file_content(uploaded_file)
+                    if file_type != "error":
+                        # Log to chat history
+                        active_chat["messages"].append({"role": "user", "content": f"[System] User uploaded: {uploaded_file.name}"})
+                        active_chat["messages"].append({"role": "assistant", "content": f"Confirmed. I am now analyzing {uploaded_file.name}."})
+                        
+                        if file_type == "image":
+                            # Vision Buffer (Ram Only)
+                            active_chat["vision_buffer"] = content 
+                            active_chat["file_name"] = uploaded_file.name
+                            google_chat.send_message(["[System: User attached image. Analyze it.]", content])
+                        else:
+                            google_chat.send_message(f"[System: User document '{uploaded_file.name}' content]:\n{memory_content}")
+                        
+                        st.session_state[file_id] = True
+                        save_ledger(st.session_state.all_chats) # Save Event
+                        st.rerun()
+
+    if active_chat["file_name"]:
+        st.info(f"👁️ **Active Vision:** David is looking at '{active_chat['file_name']}' in this chat.")
+
+    # INPUT
+    user_input = st.chat_input("Message David...")
+
+    if user_input:
         with st.chat_message("user", avatar="👤"):
-            st.markdown(msg["content"])
-    else:
-        with st.chat_message("assistant", avatar="✨"):
-            st.markdown(msg["content"])
+            st.markdown(user_input)
+        active_chat["messages"].append({"role": "user", "content": user_input})
+        
+        update_chat_title(user_input)
 
-# === ATTACHMENT AREA ===
-st.markdown("### 📎 Attach Assets")
-uploaded_files = st.file_uploader("Select files", type=["pdf", "txt", "csv", "jpg", "png"], accept_multiple_files=True, label_visibility="collapsed")
-
-if uploaded_files:
-    for uploaded_file in uploaded_files:
-        file_id = f"processed_{uploaded_file.name}_{uploaded_file.size}"
-        if file_id not in st.session_state:
-            with st.spinner(f"Ingesting {uploaded_file.name}..."):
-                file_type, content, memory_content = get_file_content(uploaded_file)
-                if file_type != "error":
-                    st.session_state.messages.append({"role": "user", "content": f"[System] User uploaded: {uploaded_file.name}"})
-                    st.session_state.messages.append({"role": "assistant", "content": f"Confirmed. I am now analyzing {uploaded_file.name}."})
-                    save_memory(st.session_state.messages) 
-                    
-                    if file_type == "image":
-                        # VISION BUFFER
-                        st.session_state.active_vision_buffer = content 
-                        st.session_state.active_file_name = uploaded_file.name
-                        st.session_state.chat.send_message(["[System: User attached image. Analyze it.]", content])
-                    else:
-                        st.session_state.chat.send_message(f"[System: User document '{uploaded_file.name}' content]:\n{memory_content}")
-                    
-                    st.session_state[file_id] = True
-                    st.rerun()
-
-if st.session_state.active_file_name:
-    st.info(f"👁️ **Active Vision:** David is looking at '{st.session_state.active_file_name}'.")
-
-user_input = st.chat_input("Message David...")
-
-if user_input:
-    with st.chat_message("user", avatar="👤"):
-        st.markdown(user_input)
-    st.session_state.messages.append({"role": "user", "content": user_input})
-    save_memory(st.session_state.messages)
-
-    try:
-        with st.chat_message("assistant", avatar="✨"):
-            message_placeholder = st.empty()
-            full_response = ""
-            
-            final_content = user_input
-            if st.session_state.active_vision_buffer:
-                final_content = [user_input, st.session_state.active_vision_buffer]
-            
-            try:
-                for chunk in st.session_state.chat.send_message_stream(final_content):
-                    full_response += chunk.text
-                    message_placeholder.markdown(full_response + "▌")
-            except Exception as e:
-                # Fallback
+        try:
+            with st.chat_message("assistant", avatar="✨"):
+                message_placeholder = st.empty()
+                full_response = ""
+                
+                final_content = user_input
+                if active_chat["vision_buffer"]:
+                    final_content = [user_input, active_chat["vision_buffer"]]
+                
                 try:
-                    fallback_chat = client.chats.create(model="gemini-1.5-flash", history=history_for_google)
-                    for chunk in fallback_chat.send_message_stream(final_content):
+                    for chunk in google_chat.send_message_stream(final_content):
                         full_response += chunk.text
                         message_placeholder.markdown(full_response + "▌")
-                except:
-                    message_placeholder.markdown(f"System Error: {e}")
+                except Exception as e:
+                    try:
+                        fallback_chat = client.chats.create(model="gemini-1.5-flash", history=history_for_google)
+                        for chunk in fallback_chat.send_message_stream(final_content):
+                            full_response += chunk.text
+                            message_placeholder.markdown(full_response + "▌")
+                    except:
+                         message_placeholder.markdown(f"System Error: {e}")
 
-            message_placeholder.markdown(full_response)
-        
-        st.session_state.messages.append({"role": "assistant", "content": full_response})
-        save_memory(st.session_state.messages)
+                message_placeholder.markdown(full_response)
+            
+            active_chat["messages"].append({"role": "assistant", "content": full_response})
+            save_ledger(st.session_state.all_chats) # Save Response
 
-    except Exception as e:
-        st.error(f"System Error: {e}")
+        except Exception as e:
+            st.error(f"System Error: {e}")
