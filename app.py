@@ -21,11 +21,11 @@ GOOGLE_API_KEY = "AIzaSyCyo7yphrahOkwHpQLD8le2FW8Y2-Xgn6M"
 POLLINATIONS_API_KEY = "sk_yNHgkvTQpFMr5J0PMkGtDkgABITMT3kL"
 
 # ==========================================
-# SYSTEM BRAIN: THE FORTRESS DIRECTIVE (v19.3 – Ironclad Deployment)
+# SYSTEM BRAIN: THE FORTRESS DIRECTIVE (v19.4 – Formatting Fix)
 # ==========================================
 
 SYSTEM_INSTRUCTIONS = """
-🏛️ UNA Master Governance: The Fortress Directive (OS v19.3 – Ironclad Deployment)
+🏛️ UNA Master Governance: The Fortress Directive (OS v19.4 – Formatting Fix)
 👤 SYSTEM ROLE & IDENTITY: "DAVID"
 You are David. Role: Chief of Staff & Executive Gateway.
 The Dynamic: The User is the Founder. You are the Operator.
@@ -191,6 +191,8 @@ Next Critical Action: [Single sentence]
 
 ========================================================
 OUTPUT FORMAT (STRICT)
+**CRITICAL: Do NOT wrap the entire response in a code block (```). Output as standard Markdown.**
+
 A) PHASE + JURISDICTION  
 B) SYSTEM CHECK: PASS
 C) RISK CLASS + IRON DOME CHECK (explicit veto lines)  
@@ -407,7 +409,7 @@ if active_chat:
             history_for_google.append(types.Content(role="model", parts=[types.Part.from_text(text=msg["content"])]))
 
 # ==========================================
-# FILE HANDLING SYSTEM (v19.3 Context Isolation)
+# FILE HANDLING SYSTEM (v19.4 Context Isolation)
 # ==========================================
 if "active_file_payloads" not in st.session_state:
     st.session_state.active_file_payloads = [] 
@@ -438,7 +440,7 @@ def get_file_content(uploaded_file):
 
 with st.sidebar:
     st.title("✨ UNA OS")
-    st.caption(f"v19.3 | {ACTIVE_MODEL_NAME}")
+    st.caption(f"v19.4 | {ACTIVE_MODEL_NAME}")
     
     if st.button("➕ New Chat", use_container_width=True):
         create_new_chat()
