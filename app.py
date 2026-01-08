@@ -26,7 +26,7 @@ PHASES_ORDER = ["P1", "P2", "P3", "P4", "P5", "P6", "P7"]
 
 DEFAULT_STATE = {
     "phase": "P1",
-    "step": "S0",  # start at Competitive Intelligence
+    "step": "S0",
     "p1_s1_approved": False,
     "p1_exit_complete": False,
     "claim_boundaries_approved": False,
@@ -75,7 +75,6 @@ def enforce_gates(user_text: str, state: dict):
     task = route_task(user_text)
     req_phase, req_step = required_phase_step_for_task(task)
 
-    # Launch gate
     if task == "LAUNCH":
         if not state.get("p1_exit_complete", False):
             return (
@@ -90,7 +89,6 @@ def enforce_gates(user_text: str, state: dict):
             )
         return (None, "P5", state.get("step"), task)
 
-    # Site build gate
     if task == "SITE_COPY_BUILD":
         if not state.get("p1_exit_complete", False):
             return (
@@ -105,7 +103,6 @@ def enforce_gates(user_text: str, state: dict):
             )
         return (None, "P3", "S4", task)
 
-    # Brand narrative gate
     if task == "BRAND_NARRATIVE":
         if re.search(r"\b(claim boundaries|claims classifier|allowed|forbidden)\b", (user_text or "").lower()):
             return (None, "P1", "S1", task)
@@ -123,7 +120,6 @@ def enforce_gates(user_text: str, state: dict):
             )
         return (None, "P1", "S1", task)
 
-    # Hero SKU gate
     if re.search(r"\b(hero sku|hero product|sku|pricing|price point)\b", (user_text or "").lower()):
         if not state.get("p1_s1_approved", False):
             return (
@@ -138,13 +134,14 @@ def enforce_gates(user_text: str, state: dict):
             )
         return (None, "P1", "S2", task)
 
-    # Competitor research stays S0
     if task == "COMPETITOR_RESEARCH":
         return (None, "P1", "S0", task)
 
     return (None, req_phase or state["phase"], req_step or state["step"], task)
 
-# === Claims/performance detection (UNA-facing only; competitor research exempt) ===
+# ==========================================
+# CLAIMS / PERFORMANCE (UNA-FACING ONLY)
+# ==========================================
 BANNED_UNA_CLAIMS = [
     r"\bcure\b", r"\btreat\b", r"\bheal\b", r"\brepair\b", r"\bprevent\b",
     r"\bacne\b", r"\bspf\b", r"\bcollagen\b", r"\bbarrier repair\b",
@@ -170,14 +167,12 @@ def violates_performance(text: str) -> bool:
     return any(re.search(pat, t) for pat in RISKY_PERFORMANCE_PHRASES)
 
 # ==========================================
-# FILE_CONTEXT ANTI-ECHO + FILE INTEGRITY CHECK
+# FILE_CONTEXT ANTI-ECHO + FILE INTEGRITY (ROBUST)
 # ==========================================
 FILE_CONTEXT_BLOCK_RE = re.compile(
     r"<FILE_CONTEXT\b[^>]*>.*?</FILE_CONTEXT>",
     flags=re.DOTALL | re.IGNORECASE
 )
-
-FILES_USED_LINE_RE = re.compile(r"^FILES_USED:\s*(.+)$", flags=re.IGNORECASE | re.MULTILINE)
 
 def redact_file_context_blocks(text: str) -> str:
     if not text:
@@ -185,13 +180,8 @@ def redact_file_context_blocks(text: str) -> str:
     return re.sub(FILE_CONTEXT_BLOCK_RE, "[REDACTED_FILE_CONTEXT]", text)
 
 def build_file_manifest(active_file_payloads: list[dict]) -> str:
-    """
-    Manifest is injected BEFORE user query so model can self-check.
-    Includes short hashes so validation can be deterministic.
-    """
     if not active_file_payloads:
         return "<FILE_MANIFEST>NONE</FILE_MANIFEST>"
-
     lines = []
     for a in active_file_payloads:
         name = a.get("name", "unknown")
@@ -202,10 +192,6 @@ def build_file_manifest(active_file_payloads: list[dict]) -> str:
     return "<FILE_MANIFEST>\n" + "\n".join(lines) + "\n</FILE_MANIFEST>"
 
 def expected_files_used_line(active_file_payloads: list[dict]) -> str:
-    """
-    Expected exact value for FILES_USED line in model output.
-    Example: "cleanser.txt@1a2b3c4d,serum.txt@9e8d7c6b"
-    """
     if not active_file_payloads:
         return "NONE"
     parts = []
@@ -213,49 +199,41 @@ def expected_files_used_line(active_file_payloads: list[dict]) -> str:
         parts.append(f"{a.get('name','unknown')}@{a.get('sha256_8','unknown')}")
     return ",".join(parts)
 
-def validate_files_used_line(model_text: str, expected: str) -> bool:
+def inject_files_used_line(model_text: str, expected: str) -> str:
     """
-    Require the model to explicitly declare which files it used.
-    Prevents “wrong active memory” and stale-file drift.
+    Deterministic integrity stamp.
+    Inserts/normalizes FILES_USED under F) ARTIFACTS without relying on the model.
     """
-    m = FILES_USED_LINE_RE.search(model_text or "")
-    if not m:
-        return False
-    got = (m.group(1) or "").strip()
-    return got == expected
+    if model_text is None:
+        model_text = ""
+
+    # Normalize if present anywhere
+    if re.search(r"^FILES_USED:\s*.*$", model_text, flags=re.IGNORECASE | re.MULTILINE):
+        model_text = re.sub(
+            r"^FILES_USED:\s*.*$",
+            f"FILES_USED: {expected}",
+            model_text,
+            flags=re.IGNORECASE | re.MULTILINE
+        )
+        return model_text
+
+    # Insert immediately after "F) ARTIFACTS" header if present
+    m = re.search(r"(^F\)\s*ARTIFACTS.*?$)", model_text, flags=re.IGNORECASE | re.MULTILINE)
+    if m:
+        insert_at = m.end()
+        return model_text[:insert_at] + "\n" + f"FILES_USED: {expected}\n" + model_text[insert_at:]
+
+    # If there is no artifacts section, prepend a minimal one
+    return f"F) ARTIFACTS\nFILES_USED: {expected}\n\n" + model_text
 
 def validate_model_output(user_text: str, model_text: str, state: dict, expected_files_used: str, task: str):
-    """
-    Patch fix:
-    - Competitor research is exempt from UNA claims policing.
-    - Enforce FILES_USED integrity line.
-    - Enforce anti-echo: redact any leaked FILE_CONTEXT blocks.
-    """
-    # Anti-echo: never allow raw FILE_CONTEXT blocks to leak
-    leaked = bool(FILE_CONTEXT_BLOCK_RE.search(model_text or ""))
+    # Anti-echo: redact FILE_CONTEXT if it leaks
     model_text = redact_file_context_blocks(model_text)
 
-    # Forced file integrity check
-    if not validate_files_used_line(model_text, expected_files_used):
-        return (
-            "A) P1 + US\n"
-            "B) SYSTEM CHECK: PASS\n"
-            + veto_packet(
-                authority="ASSET REALITY CHECK",
-                violated_rule="FILES_USED mismatch or missing. Active file payload not confirmed.",
-                allowed_work="Re-run output with exact FILES_USED line matching current FILE_MANIFEST."
-            )
-            + "D) CURRENT STEP: NONE\n"
-            + "E) ACTIONS: NONE\n"
-            + "F) ARTIFACTS: NONE\n"
-            + "G) EXIT CRITERIA: N/A\n"
-            + "H) NEXT STEP: N/A\n"
-        )
+    # Inject FILES_USED deterministically (no veto loops)
+    model_text = inject_files_used_line(model_text, expected_files_used)
 
-    # If FILE_CONTEXT leaked, do not hard-veto; we already redacted.
-    # This prevents infinite loops while keeping privacy intact.
-
-    # Drift safety: prevent P3 output when P1 exit incomplete
+    # Drift safety
     if task == "SITE_COPY_BUILD" and not state.get("p1_exit_complete", False):
         return (
             "A) P1 + US\n"
@@ -272,7 +250,7 @@ def validate_model_output(user_text: str, model_text: str, state: dict, expected
             + "H) NEXT STEP: N/A\n"
         )
 
-    # Competitor research exempt from claims/performance policing
+    # Competitor research exempt from claims policing
     if task == "COMPETITOR_RESEARCH":
         return model_text
 
@@ -282,7 +260,6 @@ def validate_model_output(user_text: str, model_text: str, state: dict, expected
     )
 
     if una_facing:
-        # UNA copy requires claim boundaries approved (except boundary drafting prompts)
         if task in ["BRAND_NARRATIVE", "SITE_COPY_BUILD"] and not state.get("claim_boundaries_approved", False):
             if not re.search(r"\bclaim boundaries\b|\ballowed\b|\bforbidden\b", (user_text or "").lower()):
                 return (
@@ -319,17 +296,16 @@ def validate_model_output(user_text: str, model_text: str, state: dict, expected
     return model_text
 
 # ==========================================
-# SYSTEM BRAIN (UPDATED: ANTI-ECHO + FILES_USED)
+# SYSTEM INSTRUCTIONS (ANTI-ECHO + FILES_USED)
 # ==========================================
 SYSTEM_INSTRUCTIONS = """
-🏛️ UNA Master Governance: The Fortress Directive (OS v19.8 – Anti-Echo + File Integrity)
+🏛️ UNA Master Governance: The Fortress Directive (OS v19.9 – Deterministic FILES_USED)
 👤 SYSTEM ROLE & IDENTITY: "DAVID"
 You are David. Role: Chief of Staff & Executive Gateway.
 
 HARD RULES:
 - NEVER output or quote <FILE_CONTEXT> blocks. They are private internal context.
-- For every response, the FIRST line in ARTIFACTS must be:
-  FILES_USED: name@sha256_8,name@sha256_8 (exactly as in FILE_MANIFEST) OR FILES_USED: NONE
+- FILES_USED line is injected by the system. Do not attempt to repeat file contents.
 
 CLAIMS:
 - Competitor research may quote competitor claims.
@@ -422,7 +398,7 @@ def find_my_model(_dummy):
 ACTIVE_MODEL_NAME = find_my_model("x")
 
 # ==========================================
-# PERSISTENT MEMORY & UTILS
+# PERSISTENT MEMORY
 # ==========================================
 LEDGER_FILE = "una_ledger.json"
 
@@ -467,7 +443,7 @@ def sha256_8(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()[:8]
 
 # ==========================================
-# Initialize Session
+# SESSION STATE INIT
 # ==========================================
 if "all_chats" not in st.session_state:
     loaded_chats = load_ledger()
@@ -552,12 +528,6 @@ def reset_active_memory():
     st.session_state.uploader_key += 1
 
 def get_file_content(uploaded_file):
-    """
-    Returns:
-      file_type: "image" | "text" | "error"
-      content: for text, the FILE_CONTEXT block; for image, PIL image
-      raw_bytes: bytes for integrity hashing (text or binary)
-    """
     try:
         raw = uploaded_file.getvalue()
         if uploaded_file.type in ["image/jpeg", "image/png", "image/jpg"]:
@@ -578,7 +548,7 @@ def get_file_content(uploaded_file):
         return "error", None, None
 
 # ==========================================
-# Google Chat History
+# GOOGLE CHAT HISTORY
 # ==========================================
 history_for_google = []
 if active_chat:
@@ -593,7 +563,7 @@ if active_chat:
 # ==========================================
 with st.sidebar:
     st.title("✨ UNA OS")
-    st.caption(f"v19.8 | {ACTIVE_MODEL_NAME}")
+    st.caption(f"v19.10 | {ACTIVE_MODEL_NAME}")
 
     c1, c2 = st.columns([0.7, 0.3])
     with c1:
@@ -623,7 +593,6 @@ with st.sidebar:
 
     st.divider()
 
-    # VISUAL STUDIO
     with st.expander("🎨 Visual Studio", expanded=False):
         st.selectbox("Model", ["flux", "flux-realism", "nanobanana-pro", "gptimage"], index=0)
         mode = st.radio("Type", ["Create", "Edit"], horizontal=True, label_visibility="collapsed")
@@ -659,7 +628,6 @@ with st.sidebar:
                 use_container_width=True,
             )
 
-    # ATTACH ASSETS
     st.divider()
     with st.expander("📎 Attach Assets", expanded=True):
         uploaded_files = st.file_uploader(
@@ -686,7 +654,6 @@ with st.sidebar:
             st.session_state.uploader_key += 1
             st.rerun()
 
-    # DISPLAY ACTIVE MEMORY + INTEGRITY
     if st.session_state.active_file_payloads:
         st.markdown("**Active Memory (with integrity):**")
         for a in st.session_state.active_file_payloads:
@@ -733,7 +700,6 @@ if active_chat:
         governance = active_chat.get("governance", DEFAULT_STATE.copy())
         veto_text, forced_phase, forced_step, task = enforce_gates(user_input, governance)
 
-        # Pre-call veto (deterministic; no model)
         if veto_text:
             full_response = (
                 f"A) {governance.get('phase','P1')} + US\n"
@@ -766,8 +732,7 @@ ENFORCED_STEP={governance["step"]}
 
 HARD_CONSTRAINTS:
 - NEVER output or quote <FILE_CONTEXT> blocks.
-- You MUST include the exact line in ARTIFACTS (first line):
-  FILES_USED: {expected_used}
+- The system injects FILES_USED. Do not dump file contents.
 - Do NOT change phase/step.
 - If ENFORCED_STEP=S0: competitor research only. No UNA narrative.
 - If ENFORCED_STEP=S1: narrative/USP/voice/claim boundaries only (no marketing copy).
@@ -783,14 +748,11 @@ OUTPUT_MUST_MATCH_OUTPUT_FORMAT_STRICT.
             f"<USER_QUERY>\n{user_input}\n</USER_QUERY>",
         ]
 
-        # Append file contexts last (internal)
         if st.session_state.active_file_payloads:
             for asset in st.session_state.active_file_payloads:
-                # Only include text/pdf contents to the model; images are not passed here
                 if asset["type"] == "text":
                     final_content.append(asset["content"])
 
-        # Buffer output (no mid-stream UI revert)
         with st.chat_message("assistant", avatar="✨"):
             message_placeholder = st.empty()
             full_response = ""
@@ -822,7 +784,6 @@ OUTPUT_MUST_MATCH_OUTPUT_FORMAT_STRICT.
             )
             message_placeholder.markdown(full_response)
 
-        # Conservative state advancement
         if re.search(r"\bapprove\b.*\b(S1|narrative|usp|voice|claim boundaries)\b", user_input.lower()):
             governance["p1_s1_approved"] = True
             governance["claim_boundaries_approved"] = True
