@@ -11,6 +11,7 @@ import json
 import re
 import os
 import uuid
+import hashlib
 
 # ==========================================
 # CONFIGURATION (HARD-WIRED KEYS — TEMP)
@@ -40,7 +41,7 @@ def route_task(user_text: str) -> str:
     if re.search(r"\b(narrative|usp|positioning|voice|brand story|tone|claim boundaries|claims)\b", t):
         return "BRAND_NARRATIVE"
 
-    if re.search(r"\b(homepage|landing page|copy|wireframe|sitemap|checkout|payments|shipping|analytics|cms)\b", t):
+    if re.search(r"\b(homepage|landing page|copy|wireframe|sitemap|checkout|payments|shipping|analytics|cms|website)\b", t):
         return "SITE_COPY_BUILD"
 
     if re.search(r"\b(launch|go live|release)\b", t):
@@ -74,7 +75,7 @@ def enforce_gates(user_text: str, state: dict):
     task = route_task(user_text)
     req_phase, req_step = required_phase_step_for_task(task)
 
-    # Launch gate (block unless prereqs complete)
+    # Launch gate
     if task == "LAUNCH":
         if not state.get("p1_exit_complete", False):
             return (
@@ -104,7 +105,7 @@ def enforce_gates(user_text: str, state: dict):
             )
         return (None, "P3", "S4", task)
 
-    # Brand narrative gate (UNA-facing copy requires claim boundaries approved)
+    # Brand narrative gate
     if task == "BRAND_NARRATIVE":
         if re.search(r"\b(claim boundaries|claims classifier|allowed|forbidden)\b", (user_text or "").lower()):
             return (None, "P1", "S1", task)
@@ -143,7 +144,7 @@ def enforce_gates(user_text: str, state: dict):
 
     return (None, req_phase or state["phase"], req_step or state["step"], task)
 
-# === Claims/performance detection (UNA-facing only) ===
+# === Claims/performance detection (UNA-facing only; competitor research exempt) ===
 BANNED_UNA_CLAIMS = [
     r"\bcure\b", r"\btreat\b", r"\bheal\b", r"\brepair\b", r"\bprevent\b",
     r"\bacne\b", r"\bspf\b", r"\bcollagen\b", r"\bbarrier repair\b",
@@ -168,14 +169,91 @@ def violates_performance(text: str) -> bool:
     t = (text or "").lower()
     return any(re.search(pat, t) for pat in RISKY_PERFORMANCE_PHRASES)
 
-def validate_model_output(user_text: str, model_text: str, state: dict):
+# ==========================================
+# FILE_CONTEXT ANTI-ECHO + FILE INTEGRITY CHECK
+# ==========================================
+FILE_CONTEXT_BLOCK_RE = re.compile(
+    r"<FILE_CONTEXT\b[^>]*>.*?</FILE_CONTEXT>",
+    flags=re.DOTALL | re.IGNORECASE
+)
+
+FILES_USED_LINE_RE = re.compile(r"^FILES_USED:\s*(.+)$", flags=re.IGNORECASE | re.MULTILINE)
+
+def redact_file_context_blocks(text: str) -> str:
+    if not text:
+        return text
+    return re.sub(FILE_CONTEXT_BLOCK_RE, "[REDACTED_FILE_CONTEXT]", text)
+
+def build_file_manifest(active_file_payloads: list[dict]) -> str:
+    """
+    Manifest is injected BEFORE user query so model can self-check.
+    Includes short hashes so validation can be deterministic.
+    """
+    if not active_file_payloads:
+        return "<FILE_MANIFEST>NONE</FILE_MANIFEST>"
+
+    lines = []
+    for a in active_file_payloads:
+        name = a.get("name", "unknown")
+        sha8 = a.get("sha256_8", "unknown")
+        nbytes = a.get("nbytes", 0)
+        ftype = a.get("type", "unknown")
+        lines.append(f"- {name} | type={ftype} | sha256_8={sha8} | bytes={nbytes}")
+    return "<FILE_MANIFEST>\n" + "\n".join(lines) + "\n</FILE_MANIFEST>"
+
+def expected_files_used_line(active_file_payloads: list[dict]) -> str:
+    """
+    Expected exact value for FILES_USED line in model output.
+    Example: "cleanser.txt@1a2b3c4d,serum.txt@9e8d7c6b"
+    """
+    if not active_file_payloads:
+        return "NONE"
+    parts = []
+    for a in active_file_payloads:
+        parts.append(f"{a.get('name','unknown')}@{a.get('sha256_8','unknown')}")
+    return ",".join(parts)
+
+def validate_files_used_line(model_text: str, expected: str) -> bool:
+    """
+    Require the model to explicitly declare which files it used.
+    Prevents “wrong active memory” and stale-file drift.
+    """
+    m = FILES_USED_LINE_RE.search(model_text or "")
+    if not m:
+        return False
+    got = (m.group(1) or "").strip()
+    return got == expected
+
+def validate_model_output(user_text: str, model_text: str, state: dict, expected_files_used: str, task: str):
     """
     Patch fix:
-    1) DO NOT run claims/performance veto on competitor research (it must quote/describe competitor claims).
-    2) Only enforce claims/performance on UNA-facing tasks (brand narrative, site copy, hero sku).
-    3) Keep hard veto behavior for phase-gated tasks (already handled pre-call); this is drift safety.
+    - Competitor research is exempt from UNA claims policing.
+    - Enforce FILES_USED integrity line.
+    - Enforce anti-echo: redact any leaked FILE_CONTEXT blocks.
     """
-    task = route_task(user_text)
+    # Anti-echo: never allow raw FILE_CONTEXT blocks to leak
+    leaked = bool(FILE_CONTEXT_BLOCK_RE.search(model_text or ""))
+    model_text = redact_file_context_blocks(model_text)
+
+    # Forced file integrity check
+    if not validate_files_used_line(model_text, expected_files_used):
+        return (
+            "A) P1 + US\n"
+            "B) SYSTEM CHECK: PASS\n"
+            + veto_packet(
+                authority="ASSET REALITY CHECK",
+                violated_rule="FILES_USED mismatch or missing. Active file payload not confirmed.",
+                allowed_work="Re-run output with exact FILES_USED line matching current FILE_MANIFEST."
+            )
+            + "D) CURRENT STEP: NONE\n"
+            + "E) ACTIONS: NONE\n"
+            + "F) ARTIFACTS: NONE\n"
+            + "G) EXIT CRITERIA: N/A\n"
+            + "H) NEXT STEP: N/A\n"
+        )
+
+    # If FILE_CONTEXT leaked, do not hard-veto; we already redacted.
+    # This prevents infinite loops while keeping privacy intact.
 
     # Drift safety: prevent P3 output when P1 exit incomplete
     if task == "SITE_COPY_BUILD" and not state.get("p1_exit_complete", False):
@@ -187,22 +265,14 @@ def validate_model_output(user_text: str, model_text: str, state: dict):
                 violated_rule="Model attempted P3 output while P1 exit incomplete.",
                 allowed_work="P1 only."
             )
+            + "D) CURRENT STEP: NONE\n"
+            + "E) ACTIONS: NONE\n"
+            + "F) ARTIFACTS: NONE\n"
+            + "G) EXIT CRITERIA: N/A\n"
+            + "H) NEXT STEP: N/A\n"
         )
 
-    # Drift safety: prevent hero sku when S1 not approved
-    if re.search(r"\b(hero sku|hero product|sku|pricing|price point)\b", (user_text or "").lower()):
-        if not state.get("p1_s1_approved", False):
-            return (
-                "A) P1 + US\n"
-                "B) SYSTEM CHECK: PASS\n"
-                + veto_packet(
-                    authority="Phase Router",
-                    violated_rule="Model attempted P1/S2 output before P1/S1 approval.",
-                    allowed_work="P1/S1 only."
-                )
-            )
-
-    # Patch: competitor research is exempt from claims/performance policing
+    # Competitor research exempt from claims/performance policing
     if task == "COMPETITOR_RESEARCH":
         return model_text
 
@@ -212,7 +282,7 @@ def validate_model_output(user_text: str, model_text: str, state: dict):
     )
 
     if una_facing:
-        # UNA copy requires claim boundaries approved (except when user is explicitly drafting boundaries)
+        # UNA copy requires claim boundaries approved (except boundary drafting prompts)
         if task in ["BRAND_NARRATIVE", "SITE_COPY_BUILD"] and not state.get("claim_boundaries_approved", False):
             if not re.search(r"\bclaim boundaries\b|\ballowed\b|\bforbidden\b", (user_text or "").lower()):
                 return (
@@ -223,6 +293,11 @@ def validate_model_output(user_text: str, model_text: str, state: dict):
                         violated_rule="UNA-facing copy produced without approved claim boundaries.",
                         allowed_work="P1/S1: establish claim boundaries."
                     )
+                    + "D) CURRENT STEP: NONE\n"
+                    + "E) ACTIONS: NONE\n"
+                    + "F) ARTIFACTS: NONE\n"
+                    + "G) EXIT CRITERIA: N/A\n"
+                    + "H) NEXT STEP: N/A\n"
                 )
 
         if violates_claims(model_text) or violates_performance(model_text):
@@ -234,21 +309,33 @@ def validate_model_output(user_text: str, model_text: str, state: dict):
                     violated_rule="Generated copy contains prohibited medical/performance claims.",
                     allowed_work="Rewrite using appearance-only language."
                 )
+                + "D) CURRENT STEP: NONE\n"
+                + "E) ACTIONS: NONE\n"
+                + "F) ARTIFACTS: NONE\n"
+                + "G) EXIT CRITERIA: N/A\n"
+                + "H) NEXT STEP: N/A\n"
             )
 
     return model_text
 
 # ==========================================
-# SYSTEM BRAIN (UPDATED)
+# SYSTEM BRAIN (UPDATED: ANTI-ECHO + FILES_USED)
 # ==========================================
 SYSTEM_INSTRUCTIONS = """
-🏛️ UNA Master Governance: The Fortress Directive (OS v19.7 – Competitor Exemption + No Revert UI)
+🏛️ UNA Master Governance: The Fortress Directive (OS v19.8 – Anti-Echo + File Integrity)
 👤 SYSTEM ROLE & IDENTITY: "DAVID"
 You are David. Role: Chief of Staff & Executive Gateway.
 
 HARD RULES:
-- Competitor research (P1/S0) may quote competitor claims. Do NOT apply UNA claims restrictions to competitor descriptions.
-- UNA-facing copy must obey appearance-only language unless claim boundaries approved.
+- NEVER output or quote <FILE_CONTEXT> blocks. They are private internal context.
+- For every response, the FIRST line in ARTIFACTS must be:
+  FILES_USED: name@sha256_8,name@sha256_8 (exactly as in FILE_MANIFEST) OR FILES_USED: NONE
+
+CLAIMS:
+- Competitor research may quote competitor claims.
+- UNA-facing copy must obey appearance-only language unless claim boundaries are approved.
+
+PHASE:
 - Do NOT advance phases/steps without explicit exit criteria satisfied in-conversation.
 
 OUTPUT FORMAT (STRICT)
@@ -376,6 +463,9 @@ def generate_image_from_prompt(prompt, seed=None):
     except Exception:
         return None, None
 
+def sha256_8(data: bytes) -> str:
+    return hashlib.sha256(data).hexdigest()[:8]
+
 # ==========================================
 # Initialize Session
 # ==========================================
@@ -408,6 +498,11 @@ if "current_technical_prompt" not in st.session_state:
     st.session_state.current_technical_prompt = ""
 if "current_seed" not in st.session_state:
     st.session_state.current_seed = random.randint(1, 99999)
+
+if "active_file_payloads" not in st.session_state:
+    st.session_state.active_file_payloads = []
+if "uploader_key" not in st.session_state:
+    st.session_state.uploader_key = 0
 
 def get_active_chat():
     for chat in st.session_state.all_chats:
@@ -452,6 +547,36 @@ def update_chat_title(user_text):
         active_chat["title"] = new_title
         save_ledger(st.session_state.all_chats)
 
+def reset_active_memory():
+    st.session_state.active_file_payloads = []
+    st.session_state.uploader_key += 1
+
+def get_file_content(uploaded_file):
+    """
+    Returns:
+      file_type: "image" | "text" | "error"
+      content: for text, the FILE_CONTEXT block; for image, PIL image
+      raw_bytes: bytes for integrity hashing (text or binary)
+    """
+    try:
+        raw = uploaded_file.getvalue()
+        if uploaded_file.type in ["image/jpeg", "image/png", "image/jpg"]:
+            image = PIL.Image.open(uploaded_file)
+            return "image", image, raw
+        elif uploaded_file.type == "application/pdf":
+            text = ""
+            reader = pypdf.PdfReader(uploaded_file)
+            for page in reader.pages:
+                text += (page.extract_text() or "") + "\n"
+            block = f"<FILE_CONTEXT name='{uploaded_file.name}'>\n{text}\n</FILE_CONTEXT>"
+            return "text", block, raw
+        else:
+            text = raw.decode("utf-8", errors="replace")
+            block = f"<FILE_CONTEXT name='{uploaded_file.name}'>\n{text}\n</FILE_CONTEXT>"
+            return "text", block, raw
+    except Exception:
+        return "error", None, None
+
 # ==========================================
 # Google Chat History
 # ==========================================
@@ -464,42 +589,21 @@ if active_chat:
             history_for_google.append(types.Content(role="model", parts=[types.Part.from_text(text=msg["content"])]))
 
 # ==========================================
-# FILE HANDLING
-# ==========================================
-if "active_file_payloads" not in st.session_state:
-    st.session_state.active_file_payloads = []
-
-if "uploader_key" not in st.session_state:
-    st.session_state.uploader_key = 0
-
-def get_file_content(uploaded_file):
-    try:
-        if uploaded_file.type in ["image/jpeg", "image/png", "image/jpg"]:
-            image = PIL.Image.open(uploaded_file)
-            return "image", image
-        elif uploaded_file.type == "application/pdf":
-            text = ""
-            reader = pypdf.PdfReader(uploaded_file)
-            for page in reader.pages:
-                extracted = page.extract_text() or ""
-                text += extracted + "\n"
-            return "text", f"<FILE_CONTEXT name='{uploaded_file.name}'>\n{text}\n</FILE_CONTEXT>"
-        else:
-            text = uploaded_file.getvalue().decode("utf-8", errors="replace")
-            return "text", f"<FILE_CONTEXT name='{uploaded_file.name}'>\n{text}\n</FILE_CONTEXT>"
-    except Exception:
-        return "error", None
-
-# ==========================================
 # SIDEBAR
 # ==========================================
 with st.sidebar:
     st.title("✨ UNA OS")
-    st.caption(f"v19.7 | {ACTIVE_MODEL_NAME}")
+    st.caption(f"v19.8 | {ACTIVE_MODEL_NAME}")
 
-    if st.button("➕ New Chat", use_container_width=True):
-        create_new_chat()
-        st.rerun()
+    c1, c2 = st.columns([0.7, 0.3])
+    with c1:
+        if st.button("➕ New Chat", use_container_width=True):
+            create_new_chat()
+            st.rerun()
+    with c2:
+        if st.button("🧠 Reset", use_container_width=True, help="Clear Active Memory (files)"):
+            reset_active_memory()
+            st.rerun()
 
     st.divider()
     st.markdown("**History**")
@@ -519,9 +623,11 @@ with st.sidebar:
 
     st.divider()
 
+    # VISUAL STUDIO
     with st.expander("🎨 Visual Studio", expanded=False):
         st.selectbox("Model", ["flux", "flux-realism", "nanobanana-pro", "gptimage"], index=0)
         mode = st.radio("Type", ["Create", "Edit"], horizontal=True, label_visibility="collapsed")
+
         if mode == "Create":
             st.file_uploader("Reference", type=["jpg", "png"])
             user_prompt = st.text_area("Prompt", height=80, placeholder="Describe image...")
@@ -553,6 +659,7 @@ with st.sidebar:
                 use_container_width=True,
             )
 
+    # ATTACH ASSETS
     st.divider()
     with st.expander("📎 Attach Assets", expanded=True):
         uploaded_files = st.file_uploader(
@@ -561,18 +668,31 @@ with st.sidebar:
             accept_multiple_files=True,
             key=f"uploader_{st.session_state.uploader_key}",
         )
+
         if uploaded_files:
             st.session_state.active_file_payloads = []
             for uploaded_file in uploaded_files:
-                file_type, content = get_file_content(uploaded_file)
+                file_type, content, raw = get_file_content(uploaded_file)
                 if file_type != "error":
-                    st.session_state.active_file_payloads.append({"type": file_type, "content": content, "name": uploaded_file.name})
+                    st.session_state.active_file_payloads.append(
+                        {
+                            "type": file_type,
+                            "content": content,
+                            "name": uploaded_file.name,
+                            "sha256_8": sha256_8(raw) if raw else "unknown",
+                            "nbytes": len(raw) if raw else 0,
+                        }
+                    )
             st.session_state.uploader_key += 1
             st.rerun()
 
+    # DISPLAY ACTIVE MEMORY + INTEGRITY
     if st.session_state.active_file_payloads:
-        names = [f["name"] for f in st.session_state.active_file_payloads]
-        st.info(f"🧠 **Active Memory:** {', '.join(names)}")
+        st.markdown("**Active Memory (with integrity):**")
+        for a in st.session_state.active_file_payloads:
+            st.code(f"{a['name']}  sha256_8={a['sha256_8']}  bytes={a['nbytes']}", language="text")
+    else:
+        st.info("No active files.")
 
 # ==========================================
 # MAIN CHAT
@@ -585,8 +705,14 @@ google_chat = client.chats.create(
 
 if active_chat:
     if not active_chat["messages"]:
-        st.markdown("<h1 style='text-align: center; color: #666; margin-top: 100px;'>Hello, Founder</h1>", unsafe_allow_html=True)
-        st.markdown("<p style='text-align: center; color: #444;'>How can I help you build the empire today?</p>", unsafe_allow_html=True)
+        st.markdown(
+            "<h1 style='text-align: center; color: #666; margin-top: 100px;'>Hello, Founder</h1>",
+            unsafe_allow_html=True,
+        )
+        st.markdown(
+            "<p style='text-align: center; color: #444;'>How can I help you build the empire today?</p>",
+            unsafe_allow_html=True,
+        )
 
     for msg in active_chat["messages"]:
         if msg["role"] == "user":
@@ -607,7 +733,7 @@ if active_chat:
         governance = active_chat.get("governance", DEFAULT_STATE.copy())
         veto_text, forced_phase, forced_step, task = enforce_gates(user_input, governance)
 
-        # Pre-call veto (deterministic, no model)
+        # Pre-call veto (deterministic; no model)
         if veto_text:
             full_response = (
                 f"A) {governance.get('phase','P1')} + US\n"
@@ -629,27 +755,42 @@ if active_chat:
         governance["phase"] = forced_phase or governance["phase"]
         governance["step"] = forced_step or governance["step"]
 
+        manifest = build_file_manifest(st.session_state.active_file_payloads)
+        expected_used = expected_files_used_line(st.session_state.active_file_payloads)
+
         router_block = f"""
 <TASK_ROUTER>
 TASK={task}
 ENFORCED_PHASE={governance["phase"]}
 ENFORCED_STEP={governance["step"]}
+
 HARD_CONSTRAINTS:
+- NEVER output or quote <FILE_CONTEXT> blocks.
+- You MUST include the exact line in ARTIFACTS (first line):
+  FILES_USED: {expected_used}
 - Do NOT change phase/step.
 - If ENFORCED_STEP=S0: competitor research only. No UNA narrative.
-- If ENFORCED_STEP=S1: establish narrative/USP/voice/claim boundaries only.
-- If ENFORCED_STEP=S2: hero SKU only, appearance-safe language only.
+- If ENFORCED_STEP=S1: narrative/USP/voice/claim boundaries only (no marketing copy).
+- If ENFORCED_PHASE=P3: only allowed if prerequisites satisfied.
+
 OUTPUT_MUST_MATCH_OUTPUT_FORMAT_STRICT.
 </TASK_ROUTER>
 """.strip()
 
-        final_content = [router_block, f"<USER_QUERY>\n{user_input}\n</USER_QUERY>"]
+        final_content = [
+            router_block,
+            manifest,
+            f"<USER_QUERY>\n{user_input}\n</USER_QUERY>",
+        ]
+
+        # Append file contexts last (internal)
         if st.session_state.active_file_payloads:
             for asset in st.session_state.active_file_payloads:
-                final_content.append(asset["content"])
+                # Only include text/pdf contents to the model; images are not passed here
+                if asset["type"] == "text":
+                    final_content.append(asset["content"])
 
-        # === PATCH FIX: NO MID-STREAM DISPLAY (prevents "halfway then revert") ===
-        # We buffer the full model output, then validate, then display once.
+        # Buffer output (no mid-stream UI revert)
         with st.chat_message("assistant", avatar="✨"):
             message_placeholder = st.empty()
             full_response = ""
@@ -672,7 +813,13 @@ OUTPUT_MUST_MATCH_OUTPUT_FORMAT_STRICT.
                     message_placeholder.error(f"David is overloaded. (Error: {inner_e})")
                     st.stop()
 
-            full_response = validate_model_output(user_input, full_response, governance)
+            full_response = validate_model_output(
+                user_input,
+                full_response,
+                governance,
+                expected_files_used=expected_used,
+                task=task,
+            )
             message_placeholder.markdown(full_response)
 
         # Conservative state advancement
