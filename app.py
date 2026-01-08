@@ -21,11 +21,11 @@ GOOGLE_API_KEY = "AIzaSyCyo7yphrahOkwHpQLD8le2FW8Y2-Xgn6M"
 POLLINATIONS_API_KEY = "sk_yNHgkvTQpFMr5J0PMkGtDkgABITMT3kL"
 
 # ==========================================
-# SYSTEM BRAIN: THE FORTRESS DIRECTIVE (v19.0 – Native File Handling)
+# SYSTEM BRAIN: THE FORTRESS DIRECTIVE (v19.1 – Flash Memory)
 # ==========================================
 
 SYSTEM_INSTRUCTIONS = """
-🏛️ UNA Master Governance: The Fortress Directive (OS v19.0 – Native File Handling)
+🏛️ UNA Master Governance: The Fortress Directive (OS v19.1 – Flash Memory)
 👤 SYSTEM ROLE & IDENTITY: "DAVID"
 You are David. Role: Chief of Staff & Executive Gateway.
 The Dynamic: The User is the Founder. You are the Operator.
@@ -385,11 +385,13 @@ if active_chat:
             history_for_google.append(types.Content(role="model", parts=[types.Part.from_text(text=msg["content"])]))
 
 # ==========================================
-# FILE HANDLING SYSTEM (v19.0 Native)
+# FILE HANDLING SYSTEM (v19.1 Flash Memory)
 # ==========================================
-# We store raw file content in session state, NOT in chat history until used.
 if "active_file_payloads" not in st.session_state:
     st.session_state.active_file_payloads = [] 
+
+if "uploader_key" not in st.session_state:
+    st.session_state.uploader_key = 0
 
 def get_file_content(uploaded_file):
     try:
@@ -414,7 +416,7 @@ def get_file_content(uploaded_file):
 
 with st.sidebar:
     st.title("✨ UNA OS")
-    st.caption(f"v19.0 | {ACTIVE_MODEL_NAME}")
+    st.caption(f"v19.1 | {ACTIVE_MODEL_NAME}")
     
     if st.button("➕ New Chat", use_container_width=True):
         create_new_chat()
@@ -471,10 +473,37 @@ with st.sidebar:
             st.image(st.session_state.generated_image_data, use_container_width=True)
             st.download_button("Download", data=st.session_state.generated_image_data, file_name=f"UNA_{st.session_state.current_seed}.jpg", mime="image/jpeg", use_container_width=True)
 
-    # ATTACH ASSETS
+    # ATTACH ASSETS (Dynamic Key for Auto-Clearing)
     st.divider()
     with st.expander("📎 Attach Assets", expanded=True):
-        uploaded_files = st.file_uploader("Upload context", type=["pdf", "txt", "csv", "jpg", "png"], accept_multiple_files=True)
+        uploaded_files = st.file_uploader(
+            "Upload context (Overrides previous)", 
+            type=["pdf", "txt", "csv", "jpg", "png"], 
+            accept_multiple_files=True,
+            key=f"uploader_{st.session_state.uploader_key}" # Dynamic Key
+        )
+
+        # Logic: If files uploaded, replace memory and reset uploader UI
+        if uploaded_files:
+            # 1. Clear old memory
+            st.session_state.active_file_payloads = []
+            # 2. Add new files
+            for uploaded_file in uploaded_files:
+                file_type, content = get_file_content(uploaded_file)
+                if file_type != "error":
+                    st.session_state.active_file_payloads.append({
+                        "type": file_type, 
+                        "content": content, 
+                        "name": uploaded_file.name
+                    })
+            # 3. Reset the Uploader Widget (Force Rerun to clear it)
+            st.session_state.uploader_key += 1
+            st.rerun()
+
+    # DISPLAY ACTIVE MEMORY INDICATOR (Since Uploader is now empty)
+    if st.session_state.active_file_payloads:
+        names = [f["name"] for f in st.session_state.active_file_payloads]
+        st.info(f"🧠 **Active Memory:** {', '.join(names)}")
 
 
 # ==========================================
@@ -501,19 +530,6 @@ if active_chat:
             with st.chat_message("assistant", avatar="✨"):
                 st.markdown(msg["content"])
 
-    # 2. SILENTLY INGEST ASSETS (State Management Only)
-    if uploaded_files:
-        st.session_state.active_file_payloads = [] # Reset to avoid stale duplicates
-        for uploaded_file in uploaded_files:
-            file_type, content = get_file_content(uploaded_file)
-            if file_type != "error":
-                st.session_state.active_file_payloads.append({"type": file_type, "content": content, "name": uploaded_file.name})
-    
-    # 3. DISPLAY ACTIVE ASSETS INDICATOR
-    if st.session_state.active_file_payloads:
-        names = [f["name"] for f in st.session_state.active_file_payloads]
-        st.caption(f"📎 **Ready to analyze:** {', '.join(names)}")
-
     user_input = st.chat_input("Message David...")
 
     if user_input:
@@ -530,11 +546,10 @@ if active_chat:
                 # PREPARE PAYLOAD (User Input + Silent Files)
                 final_content = [user_input]
                 
-                # Append active files to THIS REQUEST ONLY
+                # Append active files to THIS REQUEST
                 if st.session_state.active_file_payloads:
                     for asset in st.session_state.active_file_payloads:
                         final_content.append(asset["content"])
-                    # Note: We keep them in active_file_payloads so they persist for next turns unless user clears upload
                 
                 try:
                     for chunk in google_chat.send_message_stream(final_content):
