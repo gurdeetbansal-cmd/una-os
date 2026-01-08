@@ -12,6 +12,7 @@ import re
 import os
 import uuid
 import hashlib
+from typing import List, Dict, Tuple, Optional
 
 # ==========================================
 # CONFIGURATION (HARD-WIRED KEYS — TEMP)
@@ -52,7 +53,7 @@ def route_task(user_text: str) -> str:
 
     return "GENERAL"
 
-def required_phase_step_for_task(task: str):
+def required_phase_step_for_task(task: str) -> Tuple[Optional[str], Optional[str]]:
     if task == "COMPETITOR_RESEARCH":
         return ("P1", "S0")
     if task == "BRAND_NARRATIVE":
@@ -71,7 +72,7 @@ def veto_packet(authority: str, violated_rule: str, allowed_work: str = "NONE") 
         f"Allowed Work: {allowed_work}\n"
     )
 
-def enforce_gates(user_text: str, state: dict):
+def enforce_gates(user_text: str, state: dict) -> Tuple[Optional[str], str, str, str]:
     task = route_task(user_text)
     req_phase, req_step = required_phase_step_for_task(task)
 
@@ -87,7 +88,7 @@ def enforce_gates(user_text: str, state: dict):
                 state["step"],
                 task
             )
-        return (None, "P5", state.get("step"), task)
+        return (None, "P5", state.get("step", "S0"), task)
 
     if task == "SITE_COPY_BUILD":
         if not state.get("p1_exit_complete", False):
@@ -179,7 +180,7 @@ def redact_file_context_blocks(text: str) -> str:
         return text
     return re.sub(FILE_CONTEXT_BLOCK_RE, "[REDACTED_FILE_CONTEXT]", text)
 
-def build_file_manifest(active_file_payloads: list[dict]) -> str:
+def build_file_manifest(active_file_payloads: List[Dict]) -> str:
     if not active_file_payloads:
         return "<FILE_MANIFEST>NONE</FILE_MANIFEST>"
     lines = []
@@ -191,7 +192,7 @@ def build_file_manifest(active_file_payloads: list[dict]) -> str:
         lines.append(f"- {name} | type={ftype} | sha256_8={sha8} | bytes={nbytes}")
     return "<FILE_MANIFEST>\n" + "\n".join(lines) + "\n</FILE_MANIFEST>"
 
-def expected_files_used_line(active_file_payloads: list[dict]) -> str:
+def expected_files_used_line(active_file_payloads: List[Dict]) -> str:
     if not active_file_payloads:
         return "NONE"
     parts = []
@@ -207,7 +208,6 @@ def inject_files_used_line(model_text: str, expected: str) -> str:
     if model_text is None:
         model_text = ""
 
-    # Normalize if present anywhere
     if re.search(r"^FILES_USED:\s*.*$", model_text, flags=re.IGNORECASE | re.MULTILINE):
         model_text = re.sub(
             r"^FILES_USED:\s*.*$",
@@ -217,23 +217,66 @@ def inject_files_used_line(model_text: str, expected: str) -> str:
         )
         return model_text
 
-    # Insert immediately after "F) ARTIFACTS" header if present
     m = re.search(r"(^F\)\s*ARTIFACTS.*?$)", model_text, flags=re.IGNORECASE | re.MULTILINE)
     if m:
         insert_at = m.end()
         return model_text[:insert_at] + "\n" + f"FILES_USED: {expected}\n" + model_text[insert_at:]
 
-    # If there is no artifacts section, prepend a minimal one
     return f"F) ARTIFACTS\nFILES_USED: {expected}\n\n" + model_text
 
-def validate_model_output(user_text: str, model_text: str, state: dict, expected_files_used: str, task: str):
-    # Anti-echo: redact FILE_CONTEXT if it leaks
-    model_text = redact_file_context_blocks(model_text)
+# ==========================================
+# MULTI-FILE ENFORCEMENT (FORCE COVERAGE)
+# ==========================================
+def list_active_text_files(active_file_payloads: List[Dict]) -> List[str]:
+    return [a.get("name", "") for a in active_file_payloads if a.get("type") == "text" and a.get("name")]
 
-    # Inject FILES_USED deterministically (no veto loops)
+def output_covers_all_files(model_text: str, file_names: List[str]) -> bool:
+    """
+    Coverage rule: response must explicitly reference every filename at least once.
+    Deterministic and model-agnostic.
+    """
+    t = (model_text or "").lower()
+    return all(fn.lower() in t for fn in file_names)
+
+def build_multifile_directive(file_names: List[str]) -> str:
+    if not file_names:
+        return "<MULTIFILE_DIRECTIVE>NO_FILES</MULTIFILE_DIRECTIVE>"
+
+    bullets = "\n".join([f"- {fn}" for fn in file_names])
+    # Required headings force the model to touch each file
+    required_headings = "\n".join([f"## {fn}" for fn in file_names])
+
+    return f"""
+<MULTIFILE_DIRECTIVE>
+You MUST analyze ALL files listed below. No exceptions.
+
+FILES:
+{bullets}
+
+Required structure INSIDE F) ARTIFACTS:
+1) FILE_ANALYSIS (one subsection per file, in the same order)
+   - Subheading must be exactly: "## <filename>"
+   - Each subsection must contain:
+     a) Ingredient signals (3–7 bullets)
+     b) Formulation posture (1 paragraph)
+     c) Luxury cues implied (3 bullets)
+
+2) CROSS_FILE_SYNTHESIS (patterns across all products)
+3) THREE_BRAND_DIRECTIONS (3 directions derived from cross-file patterns)
+
+You must include these exact subsection headings:
+{required_headings}
+</MULTIFILE_DIRECTIVE>
+""".strip()
+
+# ==========================================
+# VALIDATION (POST-PROCESS)
+# ==========================================
+def validate_model_output(user_text: str, model_text: str, state: dict, expected_files_used: str, task: str) -> str:
+    model_text = redact_file_context_blocks(model_text)
     model_text = inject_files_used_line(model_text, expected_files_used)
 
-    # Drift safety
+    # Drift safety: block P3 output if P1 exit incomplete
     if task == "SITE_COPY_BUILD" and not state.get("p1_exit_complete", False):
         return (
             "A) P1 + US\n"
@@ -260,6 +303,7 @@ def validate_model_output(user_text: str, model_text: str, state: dict, expected
     )
 
     if una_facing:
+        # Claim boundaries gate (unless drafting boundaries)
         if task in ["BRAND_NARRATIVE", "SITE_COPY_BUILD"] and not state.get("claim_boundaries_approved", False):
             if not re.search(r"\bclaim boundaries\b|\ballowed\b|\bforbidden\b", (user_text or "").lower()):
                 return (
@@ -296,16 +340,16 @@ def validate_model_output(user_text: str, model_text: str, state: dict, expected
     return model_text
 
 # ==========================================
-# SYSTEM INSTRUCTIONS (ANTI-ECHO + FILES_USED)
+# SYSTEM INSTRUCTIONS (ANTI-ECHO + MULTI-FILE)
 # ==========================================
 SYSTEM_INSTRUCTIONS = """
-🏛️ UNA Master Governance: The Fortress Directive (OS v19.9 – Deterministic FILES_USED)
+🏛️ UNA Master Governance: The Fortress Directive (OS v20.0 – Multi-file Coverage)
 👤 SYSTEM ROLE & IDENTITY: "DAVID"
 You are David. Role: Chief of Staff & Executive Gateway.
 
 HARD RULES:
 - NEVER output or quote <FILE_CONTEXT> blocks. They are private internal context.
-- FILES_USED line is injected by the system. Do not attempt to repeat file contents.
+- The system injects FILES_USED. Do not attempt to repeat file contents.
 
 CLAIMS:
 - Competitor research may quote competitor claims.
@@ -563,7 +607,7 @@ if active_chat:
 # ==========================================
 with st.sidebar:
     st.title("✨ UNA OS")
-    st.caption(f"v19.10 | {ACTIVE_MODEL_NAME}")
+    st.caption(f"v20.0 | {ACTIVE_MODEL_NAME}")
 
     c1, c2 = st.columns([0.7, 0.3])
     with c1:
@@ -657,9 +701,19 @@ with st.sidebar:
     if st.session_state.active_file_payloads:
         st.markdown("**Active Memory (with integrity):**")
         for a in st.session_state.active_file_payloads:
-            st.code(f"{a['name']}  sha256_8={a['sha256_8']}  bytes={a['nbytes']}", language="text")
+            st.code(f"{a['name']}  sha256_8={a['sha256_8']}  bytes={a['nbytes']}  type={a['type']}", language="text")
     else:
         st.info("No active files.")
+
+# ==========================================
+# MODEL EXECUTION HELPERS
+# ==========================================
+def run_model_once(chat_obj, content_parts: List[str]) -> str:
+    out = ""
+    for chunk in chat_obj.send_message_stream(content_parts):
+        if getattr(chunk, "text", None):
+            out += chunk.text
+    return out
 
 # ==========================================
 # MAIN CHAT
@@ -724,6 +778,9 @@ if active_chat:
         manifest = build_file_manifest(st.session_state.active_file_payloads)
         expected_used = expected_files_used_line(st.session_state.active_file_payloads)
 
+        active_text_files = list_active_text_files(st.session_state.active_file_payloads)
+        multifile_directive = build_multifile_directive(active_text_files)
+
         router_block = f"""
 <TASK_ROUTER>
 TASK={task}
@@ -735,32 +792,34 @@ HARD_CONSTRAINTS:
 - The system injects FILES_USED. Do not dump file contents.
 - Do NOT change phase/step.
 - If ENFORCED_STEP=S0: competitor research only. No UNA narrative.
-- If ENFORCED_STEP=S1: narrative/USP/voice/claim boundaries only (no marketing copy).
+- If ENFORCED_STEP=S1: analysis + frameworks only. No marketing copy.
 - If ENFORCED_PHASE=P3: only allowed if prerequisites satisfied.
 
 OUTPUT_MUST_MATCH_OUTPUT_FORMAT_STRICT.
 </TASK_ROUTER>
+
+{multifile_directive}
 """.strip()
 
-        final_content = [
+        final_content: List[str] = [
             router_block,
             manifest,
             f"<USER_QUERY>\n{user_input}\n</USER_QUERY>",
         ]
 
+        # Append file contexts last (internal)
         if st.session_state.active_file_payloads:
             for asset in st.session_state.active_file_payloads:
-                if asset["type"] == "text":
-                    final_content.append(asset["content"])
+                if asset.get("type") == "text":
+                    final_content.append(asset.get("content", ""))
 
         with st.chat_message("assistant", avatar="✨"):
             message_placeholder = st.empty()
             full_response = ""
 
+            # Pass 1
             try:
-                for chunk in google_chat.send_message_stream(final_content):
-                    if getattr(chunk, "text", None):
-                        full_response += chunk.text
+                full_response = run_model_once(google_chat, final_content)
             except Exception:
                 try:
                     fallback_chat = client.chats.create(
@@ -768,12 +827,37 @@ OUTPUT_MUST_MATCH_OUTPUT_FORMAT_STRICT.
                         config=types.GenerateContentConfig(system_instruction=SYSTEM_INSTRUCTIONS),
                         history=history_for_google,
                     )
-                    for chunk in fallback_chat.send_message_stream(final_content):
-                        if getattr(chunk, "text", None):
-                            full_response += chunk.text
+                    full_response = run_model_once(fallback_chat, final_content)
                 except Exception as inner_e:
                     message_placeholder.error(f"David is overloaded. (Error: {inner_e})")
                     st.stop()
+
+            # Coverage enforcement: retry once if any file missing
+            if active_text_files and (not output_covers_all_files(full_response, active_text_files)):
+                missing = [fn for fn in active_text_files if fn.lower() not in (full_response or "").lower()]
+                correction = f"""
+<RETRY_CORRECTION>
+You failed to analyze all attached files.
+You MUST include sections for these missing files:
+{", ".join(missing)}
+Re-run the response with the required per-file structure.
+</RETRY_CORRECTION>
+""".strip()
+
+                retry_content = final_content + [correction]
+                try:
+                    full_response = run_model_once(google_chat, retry_content)
+                except Exception:
+                    try:
+                        fallback_chat = client.chats.create(
+                            model="gemini-1.5-flash",
+                            config=types.GenerateContentConfig(system_instruction=SYSTEM_INSTRUCTIONS),
+                            history=history_for_google,
+                        )
+                        full_response = run_model_once(fallback_chat, retry_content)
+                    except Exception as inner_e:
+                        message_placeholder.error(f"David is overloaded. (Error: {inner_e})")
+                        st.stop()
 
             full_response = validate_model_output(
                 user_input,
@@ -784,6 +868,7 @@ OUTPUT_MUST_MATCH_OUTPUT_FORMAT_STRICT.
             )
             message_placeholder.markdown(full_response)
 
+        # Conservative state advancement (unchanged)
         if re.search(r"\bapprove\b.*\b(S1|narrative|usp|voice|claim boundaries)\b", user_input.lower()):
             governance["p1_s1_approved"] = True
             governance["claim_boundaries_approved"] = True
