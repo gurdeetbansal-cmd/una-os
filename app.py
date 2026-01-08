@@ -21,11 +21,11 @@ GOOGLE_API_KEY = "AIzaSyCyo7yphrahOkwHpQLD8le2FW8Y2-Xgn6M"
 POLLINATIONS_API_KEY = "sk_yNHgkvTQpFMr5J0PMkGtDkgABITMT3kL"
 
 # ==========================================
-# SYSTEM BRAIN: THE FORTRESS DIRECTIVE (v19.1 – Flash Memory)
+# SYSTEM BRAIN: THE FORTRESS DIRECTIVE (v19.2 – Context Isolation)
 # ==========================================
 
 SYSTEM_INSTRUCTIONS = """
-🏛️ UNA Master Governance: The Fortress Directive (OS v19.1 – Flash Memory)
+🏛️ UNA Master Governance: The Fortress Directive (OS v19.2 – Context Isolation)
 👤 SYSTEM ROLE & IDENTITY: "DAVID"
 You are David. Role: Chief of Staff & Executive Gateway.
 The Dynamic: The User is the Founder. You are the Operator.
@@ -35,7 +35,7 @@ Core Function: You act as the single point of contact. You curate, filter, risk-
 🔍 PRE-DEPLOYMENT SYSTEM CHECK (MANDATORY)
 Before generating ANY response, David must silently perform this 3-Point QA:
 1. ASSET REALITY CHECK: Do not hallucinate files. If I don't see the file content, state "Error: File content missing."
-2. CODE INTEGRITY CHECK: Ensure variables are defined.
+2. CODE INTEGRITY CHECK: Verify code is compatible with the version installed (e.g., Next.js App Router vs Pages Router).
 3. PHASE LOGIC CHECK: Ensure outputs match the current phase.
 
 *If any check fails, Auto-Correct the response immediately before outputting.*
@@ -157,6 +157,7 @@ Before output:
 2) IRON DOME CHECK
    - If fail → explicit **VETO: REFUSED**
 3) CONTEXTUAL ACCURACY
+4) VERSION CONTROL: Ensure code matches the toolset (e.g. Next.js App Router).
 
 ========================================================
 🧠 SESSION LEDGER (REQUIRED)
@@ -385,7 +386,7 @@ if active_chat:
             history_for_google.append(types.Content(role="model", parts=[types.Part.from_text(text=msg["content"])]))
 
 # ==========================================
-# FILE HANDLING SYSTEM (v19.1 Flash Memory)
+# FILE HANDLING SYSTEM (v19.2 Context Isolation)
 # ==========================================
 if "active_file_payloads" not in st.session_state:
     st.session_state.active_file_payloads = [] 
@@ -403,10 +404,10 @@ def get_file_content(uploaded_file):
             reader = pypdf.PdfReader(uploaded_file)
             for page in reader.pages:
                 text += page.extract_text() + "\n"
-            return "text", f"[{uploaded_file.name} Content]:\n{text}"
+            return "text", f"<FILE_CONTEXT name='{uploaded_file.name}'>\n{text}\n</FILE_CONTEXT>"
         else:
             text = uploaded_file.getvalue().decode("utf-8")
-            return "text", f"[{uploaded_file.name} Content]:\n{text}"
+            return "text", f"<FILE_CONTEXT name='{uploaded_file.name}'>\n{text}\n</FILE_CONTEXT>"
     except:
         return "error", None
 
@@ -416,7 +417,7 @@ def get_file_content(uploaded_file):
 
 with st.sidebar:
     st.title("✨ UNA OS")
-    st.caption(f"v19.1 | {ACTIVE_MODEL_NAME}")
+    st.caption(f"v19.2 | {ACTIVE_MODEL_NAME}")
     
     if st.button("➕ New Chat", use_container_width=True):
         create_new_chat()
@@ -483,11 +484,8 @@ with st.sidebar:
             key=f"uploader_{st.session_state.uploader_key}" # Dynamic Key
         )
 
-        # Logic: If files uploaded, replace memory and reset uploader UI
         if uploaded_files:
-            # 1. Clear old memory
             st.session_state.active_file_payloads = []
-            # 2. Add new files
             for uploaded_file in uploaded_files:
                 file_type, content = get_file_content(uploaded_file)
                 if file_type != "error":
@@ -496,11 +494,10 @@ with st.sidebar:
                         "content": content, 
                         "name": uploaded_file.name
                     })
-            # 3. Reset the Uploader Widget (Force Rerun to clear it)
             st.session_state.uploader_key += 1
             st.rerun()
 
-    # DISPLAY ACTIVE MEMORY INDICATOR (Since Uploader is now empty)
+    # DISPLAY ACTIVE MEMORY INDICATOR
     if st.session_state.active_file_payloads:
         names = [f["name"] for f in st.session_state.active_file_payloads]
         st.info(f"🧠 **Active Memory:** {', '.join(names)}")
@@ -543,10 +540,11 @@ if active_chat:
                 message_placeholder = st.empty()
                 full_response = ""
                 
-                # PREPARE PAYLOAD (User Input + Silent Files)
-                final_content = [user_input]
+                # PREPARE PAYLOAD (ISOLATION LAYER)
+                # We wrap the user input in a distinct tag so the model knows it's the Prompt.
+                final_content = [f"<USER_QUERY>\n{user_input}\n</USER_QUERY>"]
                 
-                # Append active files to THIS REQUEST
+                # Append active files in their own tags
                 if st.session_state.active_file_payloads:
                     for asset in st.session_state.active_file_payloads:
                         final_content.append(asset["content"])
