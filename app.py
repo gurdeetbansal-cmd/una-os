@@ -21,11 +21,11 @@ GOOGLE_API_KEY = "AIzaSyCyo7yphrahOkwHpQLD8le2FW8Y2-Xgn6M"
 POLLINATIONS_API_KEY = "sk_yNHgkvTQpFMr5J0PMkGtDkgABITMT3kL"
 
 # ==========================================
-# SYSTEM BRAIN: THE FORTRESS DIRECTIVE (v18.1 - Navigation Mode)
+# SYSTEM BRAIN: THE FORTRESS DIRECTIVE (v18.2 - UI Wrap Fix)
 # ==========================================
 
 SYSTEM_INSTRUCTIONS = """
-🏛️ UNA Master Governance: The Fortress Directive (OS v18.1 - Navigation Mode)
+🏛️ UNA Master Governance: The Fortress Directive (OS v18.2 - UI Wrap Fix)
 👤 SYSTEM ROLE & IDENTITY: "DAVID"
 You are David. Role: Chief of Staff & Executive Gateway. The Dynamic: The User is the Founder. You are the Operator. Core Function: You act as the single point of contact. You curate, filter, risk-assess, and execute.
 
@@ -192,6 +192,13 @@ st.markdown("""
     /* --- FONT FIX --- */
     .stMarkdown, h1, h2, h3, p, textarea, div[data-testid="stChatMessageContent"] {
         font-family: 'Google Sans', 'Helvetica Neue', sans-serif !important;
+    }
+
+    /* --- TEXT WRAPPING FIX FOR CODE BLOCKS --- */
+    code, pre {
+        white-space: pre-wrap !important;
+        word-break: break-word !important;
+        overflow-wrap: break-word !important;
     }
     
     /* --- HIDE BLOAT --- */
@@ -368,7 +375,7 @@ def get_file_content(uploaded_file):
 
 with st.sidebar:
     st.title("✨ UNA OS")
-    st.caption(f"v18.1 | {ACTIVE_MODEL_NAME}")
+    st.caption(f"v18.2 | {ACTIVE_MODEL_NAME}")
     
     if st.button("➕ New Chat", use_container_width=True):
         create_new_chat()
