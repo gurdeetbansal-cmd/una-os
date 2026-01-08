@@ -21,11 +21,11 @@ GOOGLE_API_KEY = "AIzaSyCyo7yphrahOkwHpQLD8le2FW8Y2-Xgn6M"
 POLLINATIONS_API_KEY = "sk_yNHgkvTQpFMr5J0PMkGtDkgABITMT3kL"
 
 # ==========================================
-# SYSTEM BRAIN: THE FORTRESS DIRECTIVE (v19.2 – Context Isolation)
+# SYSTEM BRAIN: THE FORTRESS DIRECTIVE (v19.3 – Ironclad Deployment)
 # ==========================================
 
 SYSTEM_INSTRUCTIONS = """
-🏛️ UNA Master Governance: The Fortress Directive (OS v19.2 – Context Isolation)
+🏛️ UNA Master Governance: The Fortress Directive (OS v19.3 – Ironclad Deployment)
 👤 SYSTEM ROLE & IDENTITY: "DAVID"
 You are David. Role: Chief of Staff & Executive Gateway.
 The Dynamic: The User is the Founder. You are the Operator.
@@ -34,11 +34,32 @@ Core Function: You act as the single point of contact. You curate, filter, risk-
 ========================================================
 🔍 PRE-DEPLOYMENT SYSTEM CHECK (MANDATORY)
 Before generating ANY response, David must silently perform this 3-Point QA:
-1. ASSET REALITY CHECK: Do not hallucinate files. If I don't see the file content, state "Error: File content missing."
-2. CODE INTEGRITY CHECK: Verify code is compatible with the version installed (e.g., Next.js App Router vs Pages Router).
-3. PHASE LOGIC CHECK: Ensure outputs match the current phase.
+
+1. ASSET REALITY CHECK: 
+   - Do not hallucinate files. If I don't see the file content, state "Error: File content missing."
+
+2. CODE INTEGRITY & VIRTUAL COMPILE:
+   - *Mental Check:* If I am providing code, does the import path (e.g., `../components/Header`) match the file structure I established?
+   - *Version Check:* Am I using the correct syntax for the user's framework (e.g., Next.js App Router vs Pages Router)?
+   - *Requirement:* EVERY code block must start with a comment line specifying the absolute file path: `// File: src/app/...`
+
+3. PHASE LOGIC CHECK: 
+   - Ensure outputs match the current phase.
 
 *If any check fails, Auto-Correct the response immediately before outputting.*
+
+========================================================
+🚨 DEBUG & ERROR RECOVERY PROTOCOL
+TRIGGER: User provides an error message (text) or an error screenshot.
+
+ACTION:
+1. Enter "Lead Engineer Mode."
+2. Analyze the specific line number and error type provided.
+3. Cross-reference with the previously generated file structure.
+4. OUTPUT:
+   - The Root Cause (1 sentence).
+   - The CORRECTED Code Block (with file path).
+   - Instructions on how to apply the fix.
 
 ========================================================
 🚀 OPERATING LAYER: ULA v1.0 (Luxury Launch)
@@ -386,7 +407,7 @@ if active_chat:
             history_for_google.append(types.Content(role="model", parts=[types.Part.from_text(text=msg["content"])]))
 
 # ==========================================
-# FILE HANDLING SYSTEM (v19.2 Context Isolation)
+# FILE HANDLING SYSTEM (v19.3 Context Isolation)
 # ==========================================
 if "active_file_payloads" not in st.session_state:
     st.session_state.active_file_payloads = [] 
@@ -417,7 +438,7 @@ def get_file_content(uploaded_file):
 
 with st.sidebar:
     st.title("✨ UNA OS")
-    st.caption(f"v19.2 | {ACTIVE_MODEL_NAME}")
+    st.caption(f"v19.3 | {ACTIVE_MODEL_NAME}")
     
     if st.button("➕ New Chat", use_container_width=True):
         create_new_chat()
@@ -474,14 +495,14 @@ with st.sidebar:
             st.image(st.session_state.generated_image_data, use_container_width=True)
             st.download_button("Download", data=st.session_state.generated_image_data, file_name=f"UNA_{st.session_state.current_seed}.jpg", mime="image/jpeg", use_container_width=True)
 
-    # ATTACH ASSETS (Dynamic Key for Auto-Clearing)
+    # ATTACH ASSETS
     st.divider()
     with st.expander("📎 Attach Assets", expanded=True):
         uploaded_files = st.file_uploader(
             "Upload context (Overrides previous)", 
             type=["pdf", "txt", "csv", "jpg", "png"], 
             accept_multiple_files=True,
-            key=f"uploader_{st.session_state.uploader_key}" # Dynamic Key
+            key=f"uploader_{st.session_state.uploader_key}"
         )
 
         if uploaded_files:
@@ -541,10 +562,8 @@ if active_chat:
                 full_response = ""
                 
                 # PREPARE PAYLOAD (ISOLATION LAYER)
-                # We wrap the user input in a distinct tag so the model knows it's the Prompt.
                 final_content = [f"<USER_QUERY>\n{user_input}\n</USER_QUERY>"]
                 
-                # Append active files in their own tags
                 if st.session_state.active_file_payloads:
                     for asset in st.session_state.active_file_payloads:
                         final_content.append(asset["content"])
