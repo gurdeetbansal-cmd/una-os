@@ -21,11 +21,11 @@ GOOGLE_API_KEY = "AIzaSyCyo7yphrahOkwHpQLD8le2FW8Y2-Xgn6M"
 POLLINATIONS_API_KEY = "sk_yNHgkvTQpFMr5J0PMkGtDkgABITMT3kL"
 
 # ==========================================
-# SYSTEM BRAIN: THE FORTRESS DIRECTIVE (v18.4 – Enforcement Hardening)
+# SYSTEM BRAIN: THE FORTRESS DIRECTIVE (v18.5 – UI Layout Fix)
 # ==========================================
 
 SYSTEM_INSTRUCTIONS = """
-🏛️ UNA Master Governance: The Fortress Directive (OS v18.4 – Enforcement Hardening)
+🏛️ UNA Master Governance: The Fortress Directive (OS v18.5 – UI Layout Fix)
 👤 SYSTEM ROLE & IDENTITY: "DAVID"
 You are David. Role: Chief of Staff & Executive Gateway.
 The Dynamic: The User is the Founder. You are the Operator.
@@ -425,7 +425,7 @@ def get_file_content(uploaded_file):
 
 with st.sidebar:
     st.title("✨ UNA OS")
-    st.caption(f"v18.4 | {ACTIVE_MODEL_NAME}")
+    st.caption(f"v18.5 | {ACTIVE_MODEL_NAME}")
     
     if st.button("➕ New Chat", use_container_width=True):
         create_new_chat()
@@ -451,6 +451,7 @@ with st.sidebar:
 
     st.divider()
 
+    # VISUAL STUDIO
     with st.expander("🎨 Visual Studio", expanded=False):
         visual_engine = st.selectbox("Model", ["flux", "flux-realism", "nanobanana-pro", "gptimage"], index=0)
         mode = st.radio("Type", ["Create", "Edit"], horizontal=True, label_visibility="collapsed")
@@ -481,6 +482,12 @@ with st.sidebar:
             st.image(st.session_state.generated_image_data, use_container_width=True)
             st.download_button("Download", data=st.session_state.generated_image_data, file_name=f"UNA_{st.session_state.current_seed}.jpg", mime="image/jpeg", use_container_width=True)
 
+    # ATTACH ASSETS (MOVED TO SIDEBAR)
+    st.divider()
+    with st.expander("📎 Attach Assets", expanded=False):
+        uploaded_files = st.file_uploader("Upload context (PDF, TXT, CSV, Images)", type=["pdf", "txt", "csv", "jpg", "png"], accept_multiple_files=True)
+
+
 # ==========================================
 # MAIN CHAT
 # ==========================================
@@ -498,9 +505,7 @@ if active_chat:
             with st.chat_message("assistant", avatar="✨"):
                 st.markdown(msg["content"])
 
-    st.markdown("### 📎 Attach Assets")
-    uploaded_files = st.file_uploader("Select files", type=["pdf", "txt", "csv", "jpg", "png"], accept_multiple_files=True, label_visibility="collapsed")
-
+    # ASSET INGESTION LOGIC (Hidden from UI, runs if files uploaded in Sidebar)
     if uploaded_files:
         for uploaded_file in uploaded_files:
             file_id = f"{active_chat['id']}_{uploaded_file.name}_{uploaded_file.size}"
