@@ -15,7 +15,6 @@ import uuid
 # ==========================================
 # CONFIGURATION (HARD-WIRED KEYS — TEMP)
 # ==========================================
-
 GOOGLE_API_KEY = "AIzaSyCyo7yphrahOkwHpQLD8le2FW8Y2-Xgn6M"
 POLLINATIONS_API_KEY = "sk_yNHgkvTQpFMr5J0PMkGtDkgABITMT3kL"
 
@@ -24,19 +23,14 @@ POLLINATIONS_API_KEY = "sk_yNHgkvTQpFMr5J0PMkGtDkgABITMT3kL"
 # ==========================================
 PHASES_ORDER = ["P1", "P2", "P3", "P4", "P5", "P6", "P7"]
 
-P1_STEPS = ["S0", "S1", "S2", "S3", "S4", "S5"]
-P3_STEPS = ["S1", "S2", "S3", "S4", "S5", "S6", "S7"]
-P4_STEPS = ["S1", "S2", "S3", "S4", "S5", "S6"]
-
 DEFAULT_STATE = {
     "phase": "P1",
-    "step": "S0",                 # start at Competitive Intelligence
-    "p1_s1_approved": False,       # Narrative/USP/Voice/Claim boundaries approved
-    "p1_exit_complete": False,     # Brand Kit complete gate
+    "step": "S0",  # start at Competitive Intelligence
+    "p1_s1_approved": False,
+    "p1_exit_complete": False,
     "claim_boundaries_approved": False,
 }
 
-# Minimal deterministic keyword routing (intent first)
 def route_task(user_text: str) -> str:
     t = (user_text or "").lower()
 
@@ -58,7 +52,6 @@ def route_task(user_text: str) -> str:
     return "GENERAL"
 
 def required_phase_step_for_task(task: str):
-    # Force correct routing behavior
     if task == "COMPETITOR_RESEARCH":
         return ("P1", "S0")
     if task == "BRAND_NARRATIVE":
@@ -69,14 +62,7 @@ def required_phase_step_for_task(task: str):
         return ("P5", None)
     return (None, None)
 
-def phase_index(p: str) -> int:
-    try:
-        return PHASES_ORDER.index(p)
-    except ValueError:
-        return 0
-
-def veto_response(authority: str, violated_rule: str, allowed_work: str = "NONE") -> str:
-    # Strict, minimal veto packet (no soft language)
+def veto_packet(authority: str, violated_rule: str, allowed_work: str = "NONE") -> str:
     return (
         "C) VETO: REFUSED\n"
         f"Authority: {authority}\n"
@@ -85,18 +71,14 @@ def veto_response(authority: str, violated_rule: str, allowed_work: str = "NONE"
     )
 
 def enforce_gates(user_text: str, state: dict):
-    """
-    Returns (veto_text_or_none, forced_phase, forced_step, task)
-    """
     task = route_task(user_text)
     req_phase, req_step = required_phase_step_for_task(task)
 
-    # LAUNCH gate: block unless P1–P4 exits complete (we only track P1 explicitly here)
+    # Launch gate (block unless prereqs complete)
     if task == "LAUNCH":
-        # Strict: require P1 exit complete at minimum; extend with additional flags if you add them
         if not state.get("p1_exit_complete", False):
             return (
-                veto_response(
+                veto_packet(
                     authority="Phase Router",
                     violated_rule="Launch requested before completion of prerequisite exit criteria (P1–P4).",
                     allowed_work="Remain in current phase; complete P1 exit criteria."
@@ -105,14 +87,13 @@ def enforce_gates(user_text: str, state: dict):
                 state["step"],
                 task
             )
-        # If you later track P3/P4 exit, check them here
         return (None, "P5", state.get("step"), task)
 
-    # SITE_COPY_BUILD gate: block P3 unless P1 exit complete
+    # Site build gate
     if task == "SITE_COPY_BUILD":
         if not state.get("p1_exit_complete", False):
             return (
-                veto_response(
+                veto_packet(
                     authority="Phase Router",
                     violated_rule="Attempted P3 execution before P1 exit criteria (Brand Kit complete).",
                     allowed_work="P1 only: finish S1–S5 and mark exit complete."
@@ -123,16 +104,14 @@ def enforce_gates(user_text: str, state: dict):
             )
         return (None, "P3", "S4", task)
 
-    # BRAND_NARRATIVE gate: require claim boundaries before UNA-facing copy (but allow drafting claim boundaries itself)
+    # Brand narrative gate (UNA-facing copy requires claim boundaries approved)
     if task == "BRAND_NARRATIVE":
-        # If prompt is explicitly to create claim boundaries, allow S1 without pre-approval
         if re.search(r"\b(claim boundaries|claims classifier|allowed|forbidden)\b", (user_text or "").lower()):
             return (None, "P1", "S1", task)
 
-        # For any UNA-facing copy: require claim boundaries approved
         if not state.get("claim_boundaries_approved", False):
             return (
-                veto_response(
+                veto_packet(
                     authority="Claims Classifier",
                     violated_rule="UNA-facing copy requested without approved claim boundaries.",
                     allowed_work="P1/S1: establish claim boundaries + luxury voice first."
@@ -143,11 +122,11 @@ def enforce_gates(user_text: str, state: dict):
             )
         return (None, "P1", "S1", task)
 
-    # HERO SKU gate: if user asks hero SKU/pricing, block unless P1/S1 approved
+    # Hero SKU gate
     if re.search(r"\b(hero sku|hero product|sku|pricing|price point)\b", (user_text or "").lower()):
         if not state.get("p1_s1_approved", False):
             return (
-                veto_response(
+                veto_packet(
                     authority="Phase Router",
                     violated_rule="Attempted P1/S2 before P1/S1 exit criteria satisfied (Narrative/USP/Voice/Claim Boundaries).",
                     allowed_work="P1/S1 only."
@@ -158,24 +137,18 @@ def enforce_gates(user_text: str, state: dict):
             )
         return (None, "P1", "S2", task)
 
-    # Default routing: competitor research stays in P1/S0
+    # Competitor research stays S0
     if task == "COMPETITOR_RESEARCH":
         return (None, "P1", "S0", task)
 
     return (None, req_phase or state["phase"], req_step or state["step"], task)
 
-def extract_phase_step(text: str):
-    m_phase = re.search(r"\bA\)\s*(P[1-7])\b", text)
-    m_step = re.search(r"\bCURRENT STEP:\s*(S[0-9])\b", text)
-    phase = m_phase.group(1) if m_phase else None
-    step = m_step.group(1) if m_step else None
-    return phase, step
-
-# Hard post-check for illegal outputs (model drift)
+# === Claims/performance detection (UNA-facing only) ===
 BANNED_UNA_CLAIMS = [
     r"\bcure\b", r"\btreat\b", r"\bheal\b", r"\brepair\b", r"\bprevent\b",
     r"\bacne\b", r"\bspf\b", r"\bcollagen\b", r"\bbarrier repair\b",
 ]
+
 RISKY_PERFORMANCE_PHRASES = [
     r"\breduces (the )?appearance of fine lines\b",
     r"\bimproves elasticity\b",
@@ -189,122 +162,95 @@ RISKY_PERFORMANCE_PHRASES = [
 
 def violates_claims(text: str) -> bool:
     t = (text or "").lower()
-    for pat in BANNED_UNA_CLAIMS:
-        if re.search(pat, t):
-            return True
-    return False
+    return any(re.search(pat, t) for pat in BANNED_UNA_CLAIMS)
 
 def violates_performance(text: str) -> bool:
     t = (text or "").lower()
-    for pat in RISKY_PERFORMANCE_PHRASES:
-        if re.search(pat, t):
-            return True
-    return False
+    return any(re.search(pat, t) for pat in RISKY_PERFORMANCE_PHRASES)
 
 def validate_model_output(user_text: str, model_text: str, state: dict):
     """
-    If model output contradicts gates, replace with veto.
+    Patch fix:
+    1) DO NOT run claims/performance veto on competitor research (it must quote/describe competitor claims).
+    2) Only enforce claims/performance on UNA-facing tasks (brand narrative, site copy, hero sku).
+    3) Keep hard veto behavior for phase-gated tasks (already handled pre-call); this is drift safety.
     """
     task = route_task(user_text)
 
-    # If user was gated, model output must not proceed
-    # (Gating handled before calling model; this is a safety net for drift.)
+    # Drift safety: prevent P3 output when P1 exit incomplete
     if task == "SITE_COPY_BUILD" and not state.get("p1_exit_complete", False):
         return (
             "A) P1 + US\n"
             "B) SYSTEM CHECK: PASS\n"
-            + veto_response(
+            + veto_packet(
                 authority="Phase Router",
                 violated_rule="Model attempted P3 output while P1 exit incomplete.",
                 allowed_work="P1 only."
             )
         )
 
+    # Drift safety: prevent hero sku when S1 not approved
     if re.search(r"\b(hero sku|hero product|sku|pricing|price point)\b", (user_text or "").lower()):
         if not state.get("p1_s1_approved", False):
             return (
                 "A) P1 + US\n"
                 "B) SYSTEM CHECK: PASS\n"
-                + veto_response(
+                + veto_packet(
                     authority="Phase Router",
                     violated_rule="Model attempted P1/S2 output before P1/S1 approval.",
                     allowed_work="P1/S1 only."
                 )
             )
 
-    # Claims enforcement: if any UNA copy generated, enforce claim boundaries
-    # If claim boundaries not approved, block UNA-facing copy (except S1 boundary drafting)
-    if task in ["BRAND_NARRATIVE", "SITE_COPY_BUILD"] and not state.get("claim_boundaries_approved", False):
-        if not re.search(r"\bclaim boundaries\b|\ballowed\b|\bforbidden\b", (user_text or "").lower()):
+    # Patch: competitor research is exempt from claims/performance policing
+    if task == "COMPETITOR_RESEARCH":
+        return model_text
+
+    # UNA-facing enforcement only
+    una_facing = task in ["BRAND_NARRATIVE", "SITE_COPY_BUILD"] or bool(
+        re.search(r"\b(hero sku|hero product|sku|homepage|landing page|copy)\b", (user_text or "").lower())
+    )
+
+    if una_facing:
+        # UNA copy requires claim boundaries approved (except when user is explicitly drafting boundaries)
+        if task in ["BRAND_NARRATIVE", "SITE_COPY_BUILD"] and not state.get("claim_boundaries_approved", False):
+            if not re.search(r"\bclaim boundaries\b|\ballowed\b|\bforbidden\b", (user_text or "").lower()):
+                return (
+                    "A) P1 + US\n"
+                    "B) SYSTEM CHECK: PASS\n"
+                    + veto_packet(
+                        authority="Claims Classifier",
+                        violated_rule="UNA-facing copy produced without approved claim boundaries.",
+                        allowed_work="P1/S1: establish claim boundaries."
+                    )
+                )
+
+        if violates_claims(model_text) or violates_performance(model_text):
             return (
                 "A) P1 + US\n"
                 "B) SYSTEM CHECK: PASS\n"
-                + veto_response(
-                    authority="Claims Classifier",
-                    violated_rule="UNA-facing copy produced without approved claim boundaries.",
-                    allowed_work="P1/S1: establish claim boundaries."
+                + veto_packet(
+                    authority="Dr. Corinne + Arthur",
+                    violated_rule="Generated copy contains prohibited medical/performance claims.",
+                    allowed_work="Rewrite using appearance-only language."
                 )
             )
-
-    # If claims violate classifier, veto
-    if violates_claims(model_text) or violates_performance(model_text):
-        return (
-            "A) P1 + US\n"
-            "B) SYSTEM CHECK: PASS\n"
-            + veto_response(
-                authority="Dr. Corinne + Arthur",
-                violated_rule="Generated copy contains prohibited medical/performance claims.",
-                allowed_work="Rewrite using appearance-only language."
-            )
-        )
 
     return model_text
 
 # ==========================================
-# SYSTEM BRAIN (UPDATED: ENFORCE GATES, S0 RESEARCH)
+# SYSTEM BRAIN (UPDATED)
 # ==========================================
 SYSTEM_INSTRUCTIONS = """
-🏛️ UNA Master Governance: The Fortress Directive (OS v19.6 – Hard Gates + Drift Control)
+🏛️ UNA Master Governance: The Fortress Directive (OS v19.7 – Competitor Exemption + No Revert UI)
 👤 SYSTEM ROLE & IDENTITY: "DAVID"
 You are David. Role: Chief of Staff & Executive Gateway.
-The Dynamic: The User is the Founder. You are the Operator.
-Core Function: You act as the single point of contact. You curate, filter, risk-assess, and EXECUTE.
 
-========================================================
-ROUTING PRIME DIRECTIVE (HARD)
-- If user intent is competitor/product/market research → P1/S0 ONLY.
-- Do NOT draft UNA narrative/USP/voice unless explicitly requested.
-- Do NOT advance steps without explicit exit criteria satisfied in-conversation.
+HARD RULES:
+- Competitor research (P1/S0) may quote competitor claims. Do NOT apply UNA claims restrictions to competitor descriptions.
+- UNA-facing copy must obey appearance-only language unless claim boundaries approved.
+- Do NOT advance phases/steps without explicit exit criteria satisfied in-conversation.
 
-========================================================
-CLAIMS CLASSIFIER (HARD)
-- UNA-facing copy requires appearance-only language unless claim boundaries approved.
-- Forbidden: treat, cure, repair, heal, prevent, acne, collagen production, barrier repair, SPF, medical outcomes.
-- Any violation → VETO: REFUSED (Dr. Corinne + Arthur)
-
-========================================================
-PHASE MAP & STEP LADDERS
-
-P1 Brand Development & Luxury Positioning
-   S0 Competitive Intelligence (luxury Korean skincare >$200)
-   S1 Narrative + USP + Luxury Voice + Claim Boundaries
-   S2 Brand Architecture (product line logic, hero SKU)
-   S3 Visual System brief (non-color: typography, imagery, packaging cues)
-   S4 Brand Guidelines v1 (usage rules + do/don’t)
-   S5 Messaging system (headline bank, claim-safe benefit phrasing)
-   EXIT: Brand Kit complete
-
-P3 Digital Infrastructure (Website/Ecom/Privacy)
-   S1 Sitemap + user journeys + required pages
-   S2 Wireframes + components
-   S3 Tech stack + repo structure
-   S4 Build pages + CMS/content
-   S5 Payments/shipping/email/analytics
-   S6 QA
-   S7 Go-live checklist
-   EXIT: Launch-ready storefront
-
-========================================================
 OUTPUT FORMAT (STRICT)
 A) PHASE + JURISDICTION
 B) SYSTEM CHECK: PASS
@@ -314,7 +260,6 @@ E) ACTIONS (max 3, framed as Founder approval)
 F) ARTIFACTS (real drafts)
 G) EXIT CRITERIA
 H) NEXT STEP (LOCKED)
-I) [🏛️ EMPIRE STATE LEDGER] if triggered
 
 No future tense. No soft language. Execute first.
 """
@@ -550,7 +495,7 @@ def get_file_content(uploaded_file):
 # ==========================================
 with st.sidebar:
     st.title("✨ UNA OS")
-    st.caption(f"v19.6 | {ACTIVE_MODEL_NAME}")
+    st.caption(f"v19.7 | {ACTIVE_MODEL_NAME}")
 
     if st.button("➕ New Chat", use_container_width=True):
         create_new_chat()
@@ -659,12 +604,11 @@ if active_chat:
         active_chat["messages"].append({"role": "user", "content": user_input})
         update_chat_title(user_input)
 
-        # === HARD GATE BEFORE MODEL CALL ===
         governance = active_chat.get("governance", DEFAULT_STATE.copy())
         veto_text, forced_phase, forced_step, task = enforce_gates(user_input, governance)
 
+        # Pre-call veto (deterministic, no model)
         if veto_text:
-            # Deterministic veto response, no model call
             full_response = (
                 f"A) {governance.get('phase','P1')} + US\n"
                 "B) SYSTEM CHECK: PASS\n"
@@ -674,8 +618,6 @@ if active_chat:
                 "F) ARTIFACTS: NONE\n"
                 "G) EXIT CRITERIA: N/A\n"
                 "H) NEXT STEP: N/A\n"
-                "I) [🏛️ EMPIRE STATE LEDGER]\n"
-                f"Cash Position: Unknown | Active Constraints: Governance Gates | Risk Level: High | Next Critical Action: {('Complete P1 exit criteria.' if task=='LAUNCH' else 'Stay in allowed scope.')}\n"
             )
             with st.chat_message("assistant", avatar="✨"):
                 st.markdown(full_response)
@@ -684,11 +626,9 @@ if active_chat:
             save_ledger(st.session_state.all_chats)
             st.stop()
 
-        # Update enforced phase/step targets for this turn (for display + drift control)
         governance["phase"] = forced_phase or governance["phase"]
         governance["step"] = forced_step or governance["step"]
 
-        # Router header injected into model input (forces format + scope)
         router_block = f"""
 <TASK_ROUTER>
 TASK={task}
@@ -699,7 +639,6 @@ HARD_CONSTRAINTS:
 - If ENFORCED_STEP=S0: competitor research only. No UNA narrative.
 - If ENFORCED_STEP=S1: establish narrative/USP/voice/claim boundaries only.
 - If ENFORCED_STEP=S2: hero SKU only, appearance-safe language only.
-- If ENFORCED_PHASE=P3: only allowed if prerequisites satisfied.
 OUTPUT_MUST_MATCH_OUTPUT_FORMAT_STRICT.
 </TASK_ROUTER>
 """.strip()
@@ -709,7 +648,8 @@ OUTPUT_MUST_MATCH_OUTPUT_FORMAT_STRICT.
             for asset in st.session_state.active_file_payloads:
                 final_content.append(asset["content"])
 
-        # Model stream
+        # === PATCH FIX: NO MID-STREAM DISPLAY (prevents "halfway then revert") ===
+        # We buffer the full model output, then validate, then display once.
         with st.chat_message("assistant", avatar="✨"):
             message_placeholder = st.empty()
             full_response = ""
@@ -718,7 +658,6 @@ OUTPUT_MUST_MATCH_OUTPUT_FORMAT_STRICT.
                 for chunk in google_chat.send_message_stream(final_content):
                     if getattr(chunk, "text", None):
                         full_response += chunk.text
-                        message_placeholder.markdown(full_response + "▌")
             except Exception:
                 try:
                     fallback_chat = client.chats.create(
@@ -729,22 +668,18 @@ OUTPUT_MUST_MATCH_OUTPUT_FORMAT_STRICT.
                     for chunk in fallback_chat.send_message_stream(final_content):
                         if getattr(chunk, "text", None):
                             full_response += chunk.text
-                            message_placeholder.markdown(full_response + "▌")
                 except Exception as inner_e:
                     message_placeholder.error(f"David is overloaded. (Error: {inner_e})")
                     st.stop()
 
-            # === POST-VALIDATION (DRIFT KILL SWITCH) ===
             full_response = validate_model_output(user_input, full_response, governance)
             message_placeholder.markdown(full_response)
 
-        # === STATE ADVANCEMENT (EXPLICIT, MINIMAL) ===
-        # If user explicitly approves S1, allow S2 later. This is conservative.
+        # Conservative state advancement
         if re.search(r"\bapprove\b.*\b(S1|narrative|usp|voice|claim boundaries)\b", user_input.lower()):
             governance["p1_s1_approved"] = True
             governance["claim_boundaries_approved"] = True
 
-        # If user explicitly marks Brand Kit complete, unlock P3
         if re.search(r"\bbrand kit complete\b|\bp1 exit\b", user_input.lower()):
             governance["p1_exit_complete"] = True
 
