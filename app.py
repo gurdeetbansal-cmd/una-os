@@ -21,11 +21,11 @@ GOOGLE_API_KEY = "AIzaSyCyo7yphrahOkwHpQLD8le2FW8Y2-Xgn6M"
 POLLINATIONS_API_KEY = "sk_yNHgkvTQpFMr5J0PMkGtDkgABITMT3kL"
 
 # ==========================================
-# SYSTEM BRAIN: THE FORTRESS DIRECTIVE (v18.8 – QA System Check)
+# SYSTEM BRAIN: THE FORTRESS DIRECTIVE (v19.0 – Native File Handling)
 # ==========================================
 
 SYSTEM_INSTRUCTIONS = """
-🏛️ UNA Master Governance: The Fortress Directive (OS v18.8 – QA System Check)
+🏛️ UNA Master Governance: The Fortress Directive (OS v19.0 – Native File Handling)
 👤 SYSTEM ROLE & IDENTITY: "DAVID"
 You are David. Role: Chief of Staff & Executive Gateway.
 The Dynamic: The User is the Founder. You are the Operator.
@@ -34,20 +34,9 @@ Core Function: You act as the single point of contact. You curate, filter, risk-
 ========================================================
 🔍 PRE-DEPLOYMENT SYSTEM CHECK (MANDATORY)
 Before generating ANY response, David must silently perform this 3-Point QA:
-
-1. ASSET REALITY CHECK: 
-   - If I am analyzing a file, is it currently in the "Active Memory"? 
-   - If NO: STOP. Do not generate a template. State: "Error: File not found in memory."
-   - Do NOT hallucinate file content if the upload failed.
-
-2. CODE INTEGRITY CHECK:
-   - If providing code, are all variables initialized? 
-   - Are specific imports included? 
-   - Does the logic rely on a previous step that hasn't happened?
-
-3. PHASE LOGIC CHECK:
-   - Does this output strictly belong to the CURRENT PHASE? 
-   - (e.g., Do NOT provide Sitemaps (P3) if we are in Ingredient Compliance (P2)).
+1. ASSET REALITY CHECK: Do not hallucinate files. If I don't see the file content, state "Error: File content missing."
+2. CODE INTEGRITY CHECK: Ensure variables are defined.
+3. PHASE LOGIC CHECK: Ensure outputs match the current phase.
 
 *If any check fails, Auto-Correct the response immediately before outputting.*
 
@@ -341,14 +330,13 @@ if "all_chats" not in st.session_state:
         ]
         st.session_state.active_chat_id = initial_id
 
-# !!! SAFETY INITIALIZATION (PREVENTS CRASHES) !!!
+# SAFETY INIT
 if "generated_image_data" not in st.session_state:
     st.session_state.generated_image_data = None
 if "current_technical_prompt" not in st.session_state:
     st.session_state.current_technical_prompt = ""
 if "current_seed" not in st.session_state:
     st.session_state.current_seed = random.randint(1, 99999)
-# !!! END SAFETY BLOCK !!!
 
 def get_active_chat():
     for chat in st.session_state.all_chats:
@@ -397,27 +385,28 @@ if active_chat:
             history_for_google.append(types.Content(role="model", parts=[types.Part.from_text(text=msg["content"])]))
 
 # ==========================================
-# UNIVERSAL ASSET LEDGER
+# FILE HANDLING SYSTEM (v19.0 Native)
 # ==========================================
-if "asset_ledger" not in st.session_state:
-    st.session_state.asset_ledger = [] # Stores dicts: {"name": str, "content": str/image}
+# We store raw file content in session state, NOT in chat history until used.
+if "active_file_payloads" not in st.session_state:
+    st.session_state.active_file_payloads = [] 
 
 def get_file_content(uploaded_file):
     try:
         if uploaded_file.type in ["image/jpeg", "image/png", "image/jpg"]:
             image = PIL.Image.open(uploaded_file)
-            return "image", image, f"[Image File: {uploaded_file.name}]"
+            return "image", image
         elif uploaded_file.type == "application/pdf":
             text = ""
             reader = pypdf.PdfReader(uploaded_file)
             for page in reader.pages:
                 text += page.extract_text() + "\n"
-            return "text", text, text 
+            return "text", f"[{uploaded_file.name} Content]:\n{text}"
         else:
             text = uploaded_file.getvalue().decode("utf-8")
-            return "text", text, text
+            return "text", f"[{uploaded_file.name} Content]:\n{text}"
     except:
-        return "error", "", ""
+        return "error", None
 
 # ==========================================
 # SIDEBAR
@@ -425,7 +414,7 @@ def get_file_content(uploaded_file):
 
 with st.sidebar:
     st.title("✨ UNA OS")
-    st.caption(f"v18.8 | {ACTIVE_MODEL_NAME}")
+    st.caption(f"v19.0 | {ACTIVE_MODEL_NAME}")
     
     if st.button("➕ New Chat", use_container_width=True):
         create_new_chat()
@@ -484,13 +473,20 @@ with st.sidebar:
 
     # ATTACH ASSETS
     st.divider()
-    with st.expander("📎 Attach Assets", expanded=False):
-        uploaded_files = st.file_uploader("Upload context (PDF, TXT, CSV, Images)", type=["pdf", "txt", "csv", "jpg", "png"], accept_multiple_files=True)
+    with st.expander("📎 Attach Assets", expanded=True):
+        uploaded_files = st.file_uploader("Upload context", type=["pdf", "txt", "csv", "jpg", "png"], accept_multiple_files=True)
 
 
 # ==========================================
 # MAIN CHAT
 # ==========================================
+
+# 1. INITIALIZE CHAT
+google_chat = client.chats.create(
+    model=ACTIVE_MODEL_NAME,
+    config=types.GenerateContentConfig(system_instruction=SYSTEM_INSTRUCTIONS),
+    history=history_for_google
+)
 
 if active_chat:
     if not active_chat["messages"]:
@@ -505,49 +501,18 @@ if active_chat:
             with st.chat_message("assistant", avatar="✨"):
                 st.markdown(msg["content"])
 
-    # 2. INGEST ASSETS (Force Feed)
+    # 2. SILENTLY INGEST ASSETS (State Management Only)
     if uploaded_files:
+        st.session_state.active_file_payloads = [] # Reset to avoid stale duplicates
         for uploaded_file in uploaded_files:
-            file_id = f"{active_chat['id']}_{uploaded_file.name}_{uploaded_file.size}"
-            
-            # Check if this specific file has been ingested in this session
-            already_ingested = False
-            for asset in st.session_state.asset_ledger:
-                if asset["id"] == file_id:
-                    already_ingested = True
-                    break
-            
-            if not already_ingested:
-                with st.spinner(f"Reading {uploaded_file.name}..."):
-                    file_type, content, memory_content = get_file_content(uploaded_file)
-                    
-                    if file_type != "error":
-                        # Add to Ledger
-                        st.session_state.asset_ledger.append({
-                            "id": file_id,
-                            "name": uploaded_file.name,
-                            "type": file_type,
-                            "content": content,
-                            "memory_text": memory_content
-                        })
-
-                        # Force Feed into Chat History immediately
-                        if file_type == "image":
-                            # For images, we just note it. The actual image is sent on next prompt.
-                            active_chat["messages"].append({"role": "user", "content": f"[System: User uploaded image: {uploaded_file.name}]"})
-                            active_chat["messages"].append({"role": "assistant", "content": f"Confirmed. I have received the image: {uploaded_file.name}."})
-                        else:
-                            # For text, we inject the FULL CONTENT
-                            active_chat["messages"].append({"role": "user", "content": f"[System: User uploaded {uploaded_file.name}. Here is the full content:]\n\n{memory_content}"})
-                            active_chat["messages"].append({"role": "assistant", "content": f"Confirmed. I have read and analyzed {uploaded_file.name}."})
-                        
-                        save_ledger(st.session_state.all_chats)
-                        st.rerun()
-
-    # 3. SHOW ACTIVE ASSETS
-    if st.session_state.asset_ledger:
-        file_names = [a["name"] for a in st.session_state.asset_ledger]
-        st.caption(f"📚 Active Memory: {', '.join(file_names)}")
+            file_type, content = get_file_content(uploaded_file)
+            if file_type != "error":
+                st.session_state.active_file_payloads.append({"type": file_type, "content": content, "name": uploaded_file.name})
+    
+    # 3. DISPLAY ACTIVE ASSETS INDICATOR
+    if st.session_state.active_file_payloads:
+        names = [f["name"] for f in st.session_state.active_file_payloads]
+        st.caption(f"📎 **Ready to analyze:** {', '.join(names)}")
 
     user_input = st.chat_input("Message David...")
 
@@ -562,13 +527,14 @@ if active_chat:
                 message_placeholder = st.empty()
                 full_response = ""
                 
-                # PREPARE PAYLOAD (Text + All Images in Ledger)
+                # PREPARE PAYLOAD (User Input + Silent Files)
                 final_content = [user_input]
                 
-                # Append all images currently in the ledger to the prompt
-                for asset in st.session_state.asset_ledger:
-                    if asset["type"] == "image":
-                        final_content.append(asset["content"]) # The PIL Image object
+                # Append active files to THIS REQUEST ONLY
+                if st.session_state.active_file_payloads:
+                    for asset in st.session_state.active_file_payloads:
+                        final_content.append(asset["content"])
+                    # Note: We keep them in active_file_payloads so they persist for next turns unless user clears upload
                 
                 try:
                     for chunk in google_chat.send_message_stream(final_content):
@@ -576,13 +542,12 @@ if active_chat:
                         message_placeholder.markdown(full_response + "▌")
                 except Exception as e:
                      try:
-                        # Fallback
                         fallback_chat = client.chats.create(model="gemini-1.5-flash", history=history_for_google)
                         for chunk in fallback_chat.send_message_stream(final_content):
                             full_response += chunk.text
                             message_placeholder.markdown(full_response + "▌")
-                     except:
-                        message_placeholder.markdown(f"System Error: {e}")
+                     except Exception as inner_e:
+                        message_placeholder.error(f"David is overloaded. Please refresh or try again. (Error: {inner_e})")
 
                 message_placeholder.markdown(full_response)
 
