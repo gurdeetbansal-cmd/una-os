@@ -21,11 +21,11 @@ GOOGLE_API_KEY = "AIzaSyCyo7yphrahOkwHpQLD8le2FW8Y2-Xgn6M"
 POLLINATIONS_API_KEY = "sk_yNHgkvTQpFMr5J0PMkGtDkgABITMT3kL"
 
 # ==========================================
-# SYSTEM BRAIN: THE FORTRESS DIRECTIVE (v18.5 – UI Layout Fix)
+# SYSTEM BRAIN: THE FORTRESS DIRECTIVE (v18.6 – Universal Asset Ledger)
 # ==========================================
 
 SYSTEM_INSTRUCTIONS = """
-🏛️ UNA Master Governance: The Fortress Directive (OS v18.5 – UI Layout Fix)
+🏛️ UNA Master Governance: The Fortress Directive (OS v18.6 – Universal Asset Ledger)
 👤 SYSTEM ROLE & IDENTITY: "DAVID"
 You are David. Role: Chief of Staff & Executive Gateway.
 The Dynamic: The User is the Founder. You are the Operator.
@@ -388,25 +388,17 @@ if active_chat:
         elif msg["role"] == "assistant":
             history_for_google.append(types.Content(role="model", parts=[types.Part.from_text(text=msg["content"])]))
 
-google_chat = client.chats.create(
-    model=ACTIVE_MODEL_NAME,
-    config=types.GenerateContentConfig(system_instruction=SYSTEM_INSTRUCTIONS),
-    history=history_for_google
-)
-
-# Visual State (UI)
-if "generated_image_data" not in st.session_state:
-    st.session_state.generated_image_data = None
-if "current_technical_prompt" not in st.session_state:
-    st.session_state.current_technical_prompt = ""
-if "current_seed" not in st.session_state:
-    st.session_state.current_seed = random.randint(1, 99999)
+# ==========================================
+# UNIVERSAL ASSET LEDGER (v18.6 Fix)
+# ==========================================
+if "asset_ledger" not in st.session_state:
+    st.session_state.asset_ledger = [] # Stores dicts: {"name": str, "content": str/image}
 
 def get_file_content(uploaded_file):
     try:
         if uploaded_file.type in ["image/jpeg", "image/png", "image/jpg"]:
             image = PIL.Image.open(uploaded_file)
-            return "image", image, "Image Asset"
+            return "image", image, f"[Image File: {uploaded_file.name}]"
         elif uploaded_file.type == "application/pdf":
             text = ""
             reader = pypdf.PdfReader(uploaded_file)
@@ -425,7 +417,7 @@ def get_file_content(uploaded_file):
 
 with st.sidebar:
     st.title("✨ UNA OS")
-    st.caption(f"v18.5 | {ACTIVE_MODEL_NAME}")
+    st.caption(f"v18.6 | {ACTIVE_MODEL_NAME}")
     
     if st.button("➕ New Chat", use_container_width=True):
         create_new_chat()
@@ -482,7 +474,7 @@ with st.sidebar:
             st.image(st.session_state.generated_image_data, use_container_width=True)
             st.download_button("Download", data=st.session_state.generated_image_data, file_name=f"UNA_{st.session_state.current_seed}.jpg", mime="image/jpeg", use_container_width=True)
 
-    # ATTACH ASSETS (MOVED TO SIDEBAR)
+    # ATTACH ASSETS
     st.divider()
     with st.expander("📎 Attach Assets", expanded=False):
         uploaded_files = st.file_uploader("Upload context (PDF, TXT, CSV, Images)", type=["pdf", "txt", "csv", "jpg", "png"], accept_multiple_files=True)
@@ -491,6 +483,13 @@ with st.sidebar:
 # ==========================================
 # MAIN CHAT
 # ==========================================
+
+# 1. INITIALIZE CHAT
+google_chat = client.chats.create(
+    model=ACTIVE_MODEL_NAME,
+    config=types.GenerateContentConfig(system_instruction=SYSTEM_INSTRUCTIONS),
+    history=history_for_google
+)
 
 if active_chat:
     if not active_chat["messages"]:
@@ -505,28 +504,49 @@ if active_chat:
             with st.chat_message("assistant", avatar="✨"):
                 st.markdown(msg["content"])
 
-    # ASSET INGESTION LOGIC (Hidden from UI, runs if files uploaded in Sidebar)
+    # 2. INGEST ASSETS (Force Feed)
     if uploaded_files:
         for uploaded_file in uploaded_files:
             file_id = f"{active_chat['id']}_{uploaded_file.name}_{uploaded_file.size}"
-            if file_id not in st.session_state:
-                with st.spinner(f"Ingesting {uploaded_file.name}..."):
+            
+            # Check if this specific file has been ingested in this session
+            already_ingested = False
+            for asset in st.session_state.asset_ledger:
+                if asset["id"] == file_id:
+                    already_ingested = True
+                    break
+            
+            if not already_ingested:
+                with st.spinner(f"Reading {uploaded_file.name}..."):
                     file_type, content, memory_content = get_file_content(uploaded_file)
+                    
                     if file_type != "error":
-                        active_chat["messages"].append({"role": "user", "content": f"[System] User uploaded: {uploaded_file.name}"})
-                        active_chat["messages"].append({"role": "assistant", "content": f"Confirmed. I am now analyzing {uploaded_file.name}."})
+                        # Add to Ledger
+                        st.session_state.asset_ledger.append({
+                            "id": file_id,
+                            "name": uploaded_file.name,
+                            "type": file_type,
+                            "content": content,
+                            "memory_text": memory_content
+                        })
+
+                        # Force Feed into Chat History immediately
                         if file_type == "image":
-                            active_chat["vision_buffer"] = content 
-                            active_chat["file_name"] = uploaded_file.name
-                            google_chat.send_message(["[System: User attached image. Analyze it.]", content])
+                            # For images, we just note it. The actual image is sent on next prompt.
+                            active_chat["messages"].append({"role": "user", "content": f"[System: User uploaded image: {uploaded_file.name}]"})
+                            active_chat["messages"].append({"role": "assistant", "content": f"Confirmed. I have received the image: {uploaded_file.name}."})
                         else:
-                            google_chat.send_message(f"[System: User document '{uploaded_file.name}' content]:\n{memory_content}")
-                        st.session_state[file_id] = True
+                            # For text, we inject the FULL CONTENT
+                            active_chat["messages"].append({"role": "user", "content": f"[System: User uploaded {uploaded_file.name}. Here is the full content:]\n\n{memory_content}"})
+                            active_chat["messages"].append({"role": "assistant", "content": f"Confirmed. I have read and analyzed {uploaded_file.name}."})
+                        
                         save_ledger(st.session_state.all_chats)
                         st.rerun()
 
-    if active_chat["file_name"]:
-        st.info(f"👁️ **Active Vision:** David is looking at '{active_chat['file_name']}' in this chat.")
+    # 3. SHOW ACTIVE ASSETS
+    if st.session_state.asset_ledger:
+        file_names = [a["name"] for a in st.session_state.asset_ledger]
+        st.caption(f"📚 Active Memory: {', '.join(file_names)}")
 
     user_input = st.chat_input("Message David...")
 
@@ -540,9 +560,14 @@ if active_chat:
             with st.chat_message("assistant", avatar="✨"):
                 message_placeholder = st.empty()
                 full_response = ""
-                final_content = user_input
-                if active_chat["vision_buffer"]:
-                    final_content = [user_input, active_chat["vision_buffer"]]
+                
+                # PREPARE PAYLOAD (Text + All Images in Ledger)
+                final_content = [user_input]
+                
+                # Append all images currently in the ledger to the prompt
+                for asset in st.session_state.asset_ledger:
+                    if asset["type"] == "image":
+                        final_content.append(asset["content"]) # The PIL Image object
                 
                 try:
                     for chunk in google_chat.send_message_stream(final_content):
@@ -550,6 +575,7 @@ if active_chat:
                         message_placeholder.markdown(full_response + "▌")
                 except Exception as e:
                      try:
+                        # Fallback
                         fallback_chat = client.chats.create(model="gemini-1.5-flash", history=history_for_google)
                         for chunk in fallback_chat.send_message_stream(final_content):
                             full_response += chunk.text
