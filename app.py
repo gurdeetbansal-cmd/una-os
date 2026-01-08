@@ -14,15 +14,11 @@ import uuid
 from io import BytesIO
 
 # ==========================================
-# CONFIGURATION (SECURE)
+# CONFIGURATION (HARD-WIRED KEYS — TEMP)
 # ==========================================
 
-GOOGLE_API_KEY = st.secrets.get("AIzaSyCyo7yphrahOkwHpQLD8le2FW8Y2-Xgn6M") or os.getenv("GOOGLE_API_KEY")
-POLLINATIONS_API_KEY = st.secrets.get("sk_yNHgkvTQpFMr5J0PMkGtDkgABITMT3kL") or os.getenv("POLLINATIONS_API_KEY")
-
-if not GOOGLE_API_KEY:
-    st.error("Missing GOOGLE_API_KEY. Set Streamlit secrets or environment variable GOOGLE_API_KEY.")
-    st.stop()
+GOOGLE_API_KEY = "AIzaSyCyo7yphrahOkwHpQLD8le2FW8Y2-Xgn6M"
+POLLINATIONS_API_KEY = "sk_yNHgkvTQpFMr5J0PMkGtDkgABITMT3kL"
 
 # ==========================================
 # SYSTEM BRAIN: THE FORTRESS DIRECTIVE (v19.5 – Routing + Research Fix)
