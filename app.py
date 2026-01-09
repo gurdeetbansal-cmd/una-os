@@ -26,23 +26,24 @@ POLLINATIONS_API_KEY = "sk_yNHgkvTQpFMr5J0PMkGtDkgABITMT3kL"
 DEFAULT_STATE = {
     "phase": "P1",
     "step": "S0",
+
+    # P1
     "p1_s1_approved": False,
-    "p1_exit_complete": False,
     "claim_boundaries_approved": False,
-    # Optional: track whether P2 framework exists; not required for enforcement
+    "p1_exit_complete": False,
+
+    # P2 (NEW: permanent state tracking)
+    "p2_framework_complete": False,
+    "p2_non_generative": False,
+    "p2_exit_complete": False,
+
+    # Optional tracking
     "p2_framework_started": False,
 }
 
 # --- Regulatory routing (PERMANENT FIX) ---
 # P2 framework is ALLOWED.
 # P2 execution/approval/legal-opinion is VETOED.
-REG_FRAMEWORK_HINTS = [
-    r"\bframework\b", r"\bguardrails\b", r"\brequirements\b", r"\bmatrix\b",
-    r"\bdisclosure\b", r"\b(inci|ingredient)\b", r"\bpackaging elements\b",
-    r"\bmandatory\b", r"\bstop-ship\b", r"\brisk triggers\b", r"\bgovernance\b",
-    r"\blabel(ing)?\b", r"\bformat(ting)?\b", r"\blegibility\b", r"\bplacement logic\b",
-    r"\bjurisdiction scope\b", r"\b(ftc|fda)\b.*\b(high-level|principle|overview)\b",
-]
 REG_EXECUTION_HINTS = [
     r"\bapprove\b", r"\bcertif(y|ication)\b", r"\bguarantee\b", r"\bensure compliance\b",
     r"\blegal advice\b", r"\blegal opinion\b", r"\bcounsel\b", r"\blawyer\b",
@@ -53,27 +54,36 @@ REG_EXECUTION_HINTS = [
 ]
 REG_P2_TRIGGER = r"\b(p2|regulatory|compliance|packaging|label(ing)?|claims matrix|inci)\b"
 
-def is_regulatory_framework(user_text: str) -> bool:
-    t = (user_text or "").lower()
-    if re.search(REG_P2_TRIGGER, t):
-        if any(re.search(p, t) for p in REG_EXECUTION_HINTS):
-            return False
-        # Default allow: if user is in the regulatory domain and not requesting execution,
-        # treat as framework/guardrails/requirements.
-        return True
-    return False
-
 def is_regulatory_execution(user_text: str) -> bool:
     t = (user_text or "").lower()
     return bool(re.search(REG_P2_TRIGGER, t) and any(re.search(p, t) for p in REG_EXECUTION_HINTS))
 
+def is_regulatory_framework(user_text: str) -> bool:
+    t = (user_text or "").lower()
+    if re.search(REG_P2_TRIGGER, t) and not is_regulatory_execution(user_text):
+        return True
+    return False
+
+# --- State update targeting (NEW) ---
+STATE_UPDATE_TRIGGER = r"\bexecute a state update\b"
+STATE_UPDATE_TARGET_P2 = r"\b(p2|regulatory|packaging)\b"
+STATE_UPDATE_TARGET_P3 = r"\b(p3|digital infrastructure|website)\b"
+STATE_UPDATE_TARGET_P1 = r"\b(p1|brand development|brand kit|s1|s2|s3|s4|s5)\b"
+
 def route_task(user_text: str) -> str:
     t = (user_text or "").lower()
 
-    if re.search(r"\bexecute a state update\b", t):
-        return "STATE_UPDATE"
+    if re.search(STATE_UPDATE_TRIGGER, t):
+        # Targeted state updates (NEW)
+        if re.search(STATE_UPDATE_TARGET_P2, t):
+            return "STATE_UPDATE_P2"
+        if re.search(STATE_UPDATE_TARGET_P3, t):
+            return "STATE_UPDATE_P3"
+        if re.search(STATE_UPDATE_TARGET_P1, t):
+            return "STATE_UPDATE_P1"
+        # Default to P1 update (backward compatible)
+        return "STATE_UPDATE_P1"
 
-    # P2 permanent fix routing
     if is_regulatory_execution(user_text):
         return "REGULATORY_EXECUTION"
     if is_regulatory_framework(user_text):
@@ -105,12 +115,19 @@ def required_phase_step_for_task(task: str) -> Tuple[Optional[str], Optional[str
         return ("P3", "S4")
     if task == "LAUNCH":
         return ("P5", None)
-    if task == "STATE_UPDATE":
-        return ("P1", "S1")
+
     if task == "REGULATORY_FRAMEWORK":
         return ("P2", "S0")
     if task == "REGULATORY_EXECUTION":
         return ("P2", "S0")
+
+    if task == "STATE_UPDATE_P1":
+        return ("P1", "S1")
+    if task == "STATE_UPDATE_P2":
+        return ("P2", "S0")
+    if task == "STATE_UPDATE_P3":
+        return ("P3", "S1")
+
     return (None, None)
 
 def veto_packet(authority: str, violated_rule: str, allowed_work: str = "NONE") -> str:
@@ -126,19 +143,60 @@ def enforce_gates(user_text: str, state: dict) -> Tuple[Optional[str], str, str,
     Returns: (veto_text_or_none, forced_phase, forced_step, task)
     """
 
-    # 🔓 SYSTEM OVERRIDE: explicit state mutation (runs BEFORE any other gates)
-    if re.search(r"\bexecute a state update\b", (user_text or "").lower()):
+    task = route_task(user_text)
+    req_phase, req_step = required_phase_step_for_task(task)
+
+    # =========================================================
+    # STATE UPDATE HANDLERS (NEW: supports P2 & P3)
+    # =========================================================
+    if task == "STATE_UPDATE_P1":
         state["p1_s1_approved"] = True
         state["claim_boundaries_approved"] = True
         state["p1_exit_complete"] = True
         state["phase"] = "P1"
         state["step"] = "S1"
-        return (None, "P1", "S1", "STATE_UPDATE")
+        return (None, "P1", "S1", task)
 
-    task = route_task(user_text)
-    req_phase, req_step = required_phase_step_for_task(task)
+    if task == "STATE_UPDATE_P2":
+        # Mark P2 as complete at framework level (non-generative)
+        state["p2_framework_complete"] = True
+        state["p2_non_generative"] = True
+        state["p2_exit_complete"] = True
+        state["phase"] = "P2"
+        state["step"] = "S0"
+        return (None, "P2", "S0", task)
 
-    # --- P2 permanent fix enforcement ---
+    if task == "STATE_UPDATE_P3":
+        # Only allow authorizing P3 if P1 and P2 exits are complete
+        if not state.get("p1_exit_complete", False):
+            return (
+                veto_packet(
+                    authority="Phase Router",
+                    violated_rule="Attempted to authorize P3 before P1 exit complete.",
+                    allowed_work="Execute P1 state update or complete P1 exit criteria."
+                ),
+                state.get("phase", "P1"),
+                state.get("step", "S0"),
+                task
+            )
+        if not state.get("p2_exit_complete", False):
+            return (
+                veto_packet(
+                    authority="Phase Router",
+                    violated_rule="Attempted to authorize P3 before P2 marked complete.",
+                    allowed_work="Execute P2 state update or complete P2."
+                ),
+                state.get("phase", "P1"),
+                state.get("step", "S0"),
+                task
+            )
+        state["phase"] = "P3"
+        state["step"] = "S1"
+        return (None, "P3", "S1", task)
+
+    # =========================================================
+    # P2 PERMANENT FIX ENFORCEMENT
+    # =========================================================
     if task == "REGULATORY_EXECUTION":
         return (
             veto_packet(
@@ -152,19 +210,20 @@ def enforce_gates(user_text: str, state: dict) -> Tuple[Optional[str], str, str,
         )
 
     if task == "REGULATORY_FRAMEWORK":
-        # Always allow P2 framework work (no veto), regardless of P1 exit.
-        # It’s governance/requirements, not execution.
+        # Allow P2 framework work
         state["p2_framework_started"] = True
         return (None, "P2", "S0", task)
 
-    # Launch gating
+    # =========================================================
+    # LAUNCH GATING
+    # =========================================================
     if task == "LAUNCH":
-        if not state.get("p1_exit_complete", False):
+        if not state.get("p1_exit_complete", False) or not state.get("p2_exit_complete", False):
             return (
                 veto_packet(
                     authority="Phase Router",
                     violated_rule="Launch requested before completion of prerequisite exit criteria (P1–P4).",
-                    allowed_work="Remain in current phase; complete prerequisites."
+                    allowed_work="Complete prerequisites: P1 exit + P2 exit + P3/P4 as needed."
                 ),
                 state.get("phase", "P1"),
                 state.get("step", "S0"),
@@ -172,7 +231,9 @@ def enforce_gates(user_text: str, state: dict) -> Tuple[Optional[str], str, str,
             )
         return (None, "P5", state.get("step", "S0"), task)
 
-    # P3 gating
+    # =========================================================
+    # P3 GATING (UPDATED: requires P1 + P2)
+    # =========================================================
     if task == "SITE_COPY_BUILD":
         if not state.get("p1_exit_complete", False):
             return (
@@ -185,9 +246,22 @@ def enforce_gates(user_text: str, state: dict) -> Tuple[Optional[str], str, str,
                 state.get("step", "S0"),
                 task
             )
+        if not state.get("p2_exit_complete", False):
+            return (
+                veto_packet(
+                    authority="Phase Router",
+                    violated_rule="Attempted P3 execution before P2 marked complete.",
+                    allowed_work="Run P2 (framework) or mark P2 complete via state update."
+                ),
+                state.get("phase", "P1"),
+                state.get("step", "S0"),
+                task
+            )
         return (None, "P3", "S4", task)
 
-    # P1 narrative gating
+    # =========================================================
+    # P1 NARRATIVE GATING
+    # =========================================================
     if task == "BRAND_NARRATIVE":
         if re.search(r"\b(claim boundaries|claims classifier|allowed|forbidden)\b", (user_text or "").lower()):
             return (None, "P1", "S1", task)
@@ -205,7 +279,9 @@ def enforce_gates(user_text: str, state: dict) -> Tuple[Optional[str], str, str,
             )
         return (None, "P1", "S1", task)
 
-    # P1/S2 gate
+    # =========================================================
+    # P1/S2 GATE
+    # =========================================================
     if re.search(r"\b(hero sku|hero product|sku|pricing|price point|brand architecture)\b", (user_text or "").lower()):
         if not state.get("p1_s1_approved", False):
             return (
@@ -334,17 +410,16 @@ def validate_model_output(user_text: str, model_text: str, state: dict, expected
     model_text = redact_file_context_blocks(model_text)
     model_text = inject_files_used_line(model_text, expected_files_used)
 
-    if task == "STATE_UPDATE":
+    # state updates are deterministic; skip model policing
+    if task in ["STATE_UPDATE_P1", "STATE_UPDATE_P2", "STATE_UPDATE_P3"]:
         return model_text
 
-    # P2 framework: explicitly exempt from “legal veto” behavior
-    # Only enforce: no legal advice, no filings, no “guaranteed compliant” language.
+    # P2 framework: allow but block drift into approvals/filings/guarantees
     if task == "REGULATORY_FRAMEWORK":
         t = (model_text or "").lower()
         hard_no = [
             r"\blegal advice\b",
             r"\blegal opinion\b",
-            r"\bthis is compliant\b",
             r"\bguaranteed compliant\b",
             r"\bcertified\b",
             r"\bapproved by\b",
@@ -358,10 +433,10 @@ def validate_model_output(user_text: str, model_text: str, state: dict, expected
                 "B) SYSTEM CHECK: PASS\n"
                 + veto_packet(
                     authority="Arthur (Legal)",
-                    violated_rule="P2 framework output drifted into legal advice / approvals / filings.",
+                    violated_rule="P2 framework output drifted into approvals/filings/guarantees.",
                     allowed_work="Rewrite as internal requirements/guardrails only. No approvals, no filings, no guarantees."
                 )
-                + "D) CURRENT STEP: P2 / S0 + GOAL: Compliance framework (guardrails only)\n"
+                + "D) CURRENT STEP: P2 / S0 + GOAL: Packaging + claims governance (internal rules)\n"
                 + "E) ACTIONS: NONE\n"
                 + "F) ARTIFACTS: NONE\n"
                 + "G) EXIT CRITERIA: N/A\n"
@@ -369,7 +444,7 @@ def validate_model_output(user_text: str, model_text: str, state: dict, expected
             )
         return model_text
 
-    # Drift safety: block P3 output if P1 exit incomplete
+    # Prevent P3 if P1 exit incomplete
     if task == "SITE_COPY_BUILD" and not state.get("p1_exit_complete", False):
         return (
             "A) P1 + US\n"
@@ -434,7 +509,7 @@ def validate_model_output(user_text: str, model_text: str, state: dict, expected
 # SYSTEM INSTRUCTIONS
 # ==========================================
 SYSTEM_INSTRUCTIONS = """
-🏛️ UNA Master Governance: The Fortress Directive (OS v20.3 – P2 Framework Allowed)
+🏛️ UNA Master Governance: The Fortress Directive (OS v20.5 – P2 State Update Enabled)
 👤 SYSTEM ROLE & IDENTITY: "DAVID"
 You are David. Role: Chief of Staff & Executive Gateway.
 
@@ -442,9 +517,12 @@ HARD RULES:
 - NEVER output or quote <FILE_CONTEXT> blocks. They are private internal context.
 - The system injects FILES_USED. Do not attempt to repeat file contents.
 
-P2 PERMANENT POLICY:
+P2 POLICY:
 - P2 "framework/guardrails/requirements" work is ALLOWED.
 - P2 "approvals/legal opinions/filings/certifications/guarantees" is VETOED.
+
+STATE UPDATE:
+- “execute a state update” supports P1, P2, P3 targeting.
 
 CLAIMS:
 - Competitor research may quote competitor claims.
@@ -699,7 +777,7 @@ if active_chat:
 # ==========================================
 with st.sidebar:
     st.title("✨ UNA OS")
-    st.caption(f"v20.4 | {ACTIVE_MODEL_NAME}")
+    st.caption(f"v20.5 | {ACTIVE_MODEL_NAME}")
 
     c1, c2 = st.columns([0.7, 0.3])
     with c1:
@@ -872,23 +950,70 @@ if active_chat:
         governance["phase"] = forced_phase or governance.get("phase", "P1")
         governance["step"] = forced_step or governance.get("step", "S0")
 
-        # Deterministic state update response (no model)
-        if task == "STATE_UPDATE":
+        # Deterministic STATE UPDATE responses (NO MODEL)
+        if task == "STATE_UPDATE_P1":
             full_response = (
                 "A) P1 + US\n"
                 "B) SYSTEM CHECK: PASS\n"
                 "C) RISK CLASS: LOW | IRON DOME CHECK: PASS\n"
-                "D) CURRENT STEP: P1 / S1 + GOAL: Close S1 and authorize S2\n"
+                "D) CURRENT STEP: P1 / S1 + GOAL: Close P1 exit and authorize downstream phases\n"
                 "E) ACTIONS:\n"
                 "- STATE MUTATION: p1_s1_approved=TRUE\n"
                 "- STATE MUTATION: claim_boundaries_approved=TRUE\n"
                 "- STATE MUTATION: p1_exit_complete=TRUE\n"
                 "F) ARTIFACTS:\n"
-                "- FILES_USED: NONE\n"
+                "FILES_USED: NONE\n"
                 "G) EXIT CRITERIA:\n"
-                "- P1 / S1 — COMPLETE\n"
+                "- P1 — COMPLETE\n"
                 "H) NEXT STEP (LOCKED):\n"
-                "- P1 / S2 — AUTHORIZED\n"
+                "- P2 — AUTHORIZED\n"
+            )
+            with st.chat_message("assistant", avatar="✨"):
+                st.markdown(full_response)
+            active_chat["messages"].append({"role": "assistant", "content": full_response})
+            active_chat["governance"] = governance
+            save_ledger(st.session_state.all_chats)
+            st.stop()
+
+        if task == "STATE_UPDATE_P2":
+            full_response = (
+                "A) P2 + US\n"
+                "B) SYSTEM CHECK: PASS\n"
+                "C) RISK CLASS: LOW | IRON DOME CHECK: PASS\n"
+                "D) CURRENT STEP: P2 / S0 + GOAL: Mark P2 as non-generative framework complete\n"
+                "E) ACTIONS:\n"
+                "- STATE MUTATION: p2_framework_complete=TRUE\n"
+                "- STATE MUTATION: p2_non_generative=TRUE\n"
+                "- STATE MUTATION: p2_exit_complete=TRUE\n"
+                "F) ARTIFACTS:\n"
+                "FILES_USED: NONE\n"
+                "G) EXIT CRITERIA:\n"
+                "- P2 — COMPLETE (Framework level, external execution)\n"
+                "H) NEXT STEP (LOCKED):\n"
+                "- P3 / S1 — AUTHORIZED\n"
+            )
+            with st.chat_message("assistant", avatar="✨"):
+                st.markdown(full_response)
+            active_chat["messages"].append({"role": "assistant", "content": full_response})
+            active_chat["governance"] = governance
+            save_ledger(st.session_state.all_chats)
+            st.stop()
+
+        if task == "STATE_UPDATE_P3":
+            full_response = (
+                "A) P3 + US\n"
+                "B) SYSTEM CHECK: PASS\n"
+                "C) RISK CLASS: LOW | IRON DOME CHECK: PASS\n"
+                "D) CURRENT STEP: P3 / S1 + GOAL: Authorize P3 execution\n"
+                "E) ACTIONS:\n"
+                "- STATE MUTATION: phase=P3\n"
+                "- STATE MUTATION: step=S1\n"
+                "F) ARTIFACTS:\n"
+                "FILES_USED: NONE\n"
+                "G) EXIT CRITERIA:\n"
+                "- P3 authorized\n"
+                "H) NEXT STEP (LOCKED):\n"
+                "- P3 / S1 — Sitemap & User Journeys\n"
             )
             with st.chat_message("assistant", avatar="✨"):
                 st.markdown(full_response)
@@ -916,16 +1041,10 @@ HARD_CONSTRAINTS:
 
 PHASE RULES:
 - If ENFORCED_PHASE=P2 and TASK=REGULATORY_FRAMEWORK:
-  ALLOW framework/guardrails/requirements only (no legal advice, no approvals, no filings, no guarantees).
+  ALLOW framework/guardrails/requirements only (no approvals, no filings, no guarantees).
 
-- If ENFORCED_STEP=S0 and ENFORCED_PHASE=P1:
-  competitor research only. No UNA narrative.
-
-- If ENFORCED_STEP=S1:
-  analysis + frameworks only. No marketing copy.
-
-- If ENFORCED_STEP=S2:
-  brand architecture only. No pricing. No marketing copy. No claims.
+- If ENFORCED_PHASE=P3 and TASK=SITE_COPY_BUILD:
+  Allowed only if P1 exit and P2 exit are complete.
 
 OUTPUT_MUST_MATCH_OUTPUT_FORMAT_STRICT.
 </TASK_ROUTER>
@@ -946,7 +1065,6 @@ OUTPUT_MUST_MATCH_OUTPUT_FORMAT_STRICT.
         with st.chat_message("assistant", avatar="✨"):
             message_placeholder = st.empty()
 
-            # Pass 1
             try:
                 full_response = run_model_once(google_chat, final_content)
             except Exception:
@@ -961,7 +1079,6 @@ OUTPUT_MUST_MATCH_OUTPUT_FORMAT_STRICT.
                     message_placeholder.error(f"David is overloaded. (Error: {inner_e})")
                     st.stop()
 
-            # Coverage enforcement: retry once if any file missing
             if active_text_files and (not output_covers_all_files(full_response, active_text_files)):
                 missing = [fn for fn in active_text_files if fn.lower() not in (full_response or "").lower()]
                 correction = f"""
@@ -997,7 +1114,7 @@ Re-run the response with the required per-file structure.
             )
             message_placeholder.markdown(full_response)
 
-        # Optional legacy state advancement hooks
+        # Optional legacy advancement hooks
         if re.search(r"\bapprove\b.*\b(S1|narrative|usp|voice|claim boundaries)\b", user_input.lower()):
             governance["p1_s1_approved"] = True
             governance["claim_boundaries_approved"] = True
