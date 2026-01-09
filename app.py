@@ -36,6 +36,9 @@ DEFAULT_STATE = {
 def route_task(user_text: str) -> str:
     t = (user_text or "").lower()
 
+    if re.search(r"\bexecute a state update\b", t):
+        return "STATE_UPDATE"
+
     if re.search(r"\b(research|competitor|competitive|market|brands?|benchmark|audit|landscape)\b", t):
         return "COMPETITOR_RESEARCH"
 
@@ -50,10 +53,6 @@ def route_task(user_text: str) -> str:
 
     if re.search(r"\b(build|implement|code|bug|error|stack|repo|deploy|streamlit|next\.js)\b", t):
         return "BUILD_TECH"
-
-    # Explicit state update command (user-driven)
-    if re.search(r"\bexecute a state update\b", t):
-        return "STATE_UPDATE"
 
     return "GENERAL"
 
@@ -83,7 +82,7 @@ def enforce_gates(user_text: str, state: dict) -> Tuple[Optional[str], str, str,
     Returns: (veto_text_or_none, forced_phase, forced_step, task)
     """
 
-    # 🔓 SYSTEM OVERRIDE: Explicit state mutation command (MUST RUN BEFORE ANY OTHER GATES)
+    # 🔓 SYSTEM OVERRIDE: explicit state mutation (runs BEFORE any other gates)
     if re.search(r"\bexecute a state update\b", (user_text or "").lower()):
         state["p1_s1_approved"] = True
         state["claim_boundaries_approved"] = True
@@ -188,7 +187,7 @@ def violates_performance(text: str) -> bool:
     return any(re.search(pat, t) for pat in RISKY_PERFORMANCE_PHRASES)
 
 # ==========================================
-# FILE_CONTEXT ANTI-ECHO + FILE INTEGRITY (ROBUST)
+# FILE_CONTEXT ANTI-ECHO + FILE INTEGRITY
 # ==========================================
 FILE_CONTEXT_BLOCK_RE = re.compile(
     r"<FILE_CONTEXT\b[^>]*>.*?</FILE_CONTEXT>",
@@ -215,27 +214,19 @@ def build_file_manifest(active_file_payloads: List[Dict]) -> str:
 def expected_files_used_line(active_file_payloads: List[Dict]) -> str:
     if not active_file_payloads:
         return "NONE"
-    parts = []
-    for a in active_file_payloads:
-        parts.append(f"{a.get('name','unknown')}@{a.get('sha256_8','unknown')}")
-    return ",".join(parts)
+    return ",".join([f"{a.get('name','unknown')}@{a.get('sha256_8','unknown')}" for a in active_file_payloads])
 
 def inject_files_used_line(model_text: str, expected: str) -> str:
-    """
-    Deterministic integrity stamp.
-    Inserts/normalizes FILES_USED under F) ARTIFACTS without relying on the model.
-    """
     if model_text is None:
         model_text = ""
 
     if re.search(r"^FILES_USED:\s*.*$", model_text, flags=re.IGNORECASE | re.MULTILINE):
-        model_text = re.sub(
+        return re.sub(
             r"^FILES_USED:\s*.*$",
             f"FILES_USED: {expected}",
             model_text,
             flags=re.IGNORECASE | re.MULTILINE
         )
-        return model_text
 
     m = re.search(r"(^F\)\s*ARTIFACTS.*?$)", model_text, flags=re.IGNORECASE | re.MULTILINE)
     if m:
@@ -245,26 +236,20 @@ def inject_files_used_line(model_text: str, expected: str) -> str:
     return f"F) ARTIFACTS\nFILES_USED: {expected}\n\n" + model_text
 
 # ==========================================
-# MULTI-FILE ENFORCEMENT (FORCE COVERAGE)
+# MULTI-FILE ENFORCEMENT
 # ==========================================
 def list_active_text_files(active_file_payloads: List[Dict]) -> List[str]:
     return [a.get("name", "") for a in active_file_payloads if a.get("type") == "text" and a.get("name")]
 
 def output_covers_all_files(model_text: str, file_names: List[str]) -> bool:
-    """
-    Coverage rule: response must explicitly reference every filename at least once.
-    Deterministic and model-agnostic.
-    """
     t = (model_text or "").lower()
     return all(fn.lower() in t for fn in file_names)
 
 def build_multifile_directive(file_names: List[str]) -> str:
     if not file_names:
         return "<MULTIFILE_DIRECTIVE>NO_FILES</MULTIFILE_DIRECTIVE>"
-
     bullets = "\n".join([f"- {fn}" for fn in file_names])
     required_headings = "\n".join([f"## {fn}" for fn in file_names])
-
     return f"""
 <MULTIFILE_DIRECTIVE>
 You MUST analyze ALL files listed below. No exceptions.
@@ -298,7 +283,6 @@ def validate_model_output(user_text: str, model_text: str, state: dict, expected
     if task == "STATE_UPDATE":
         return model_text
 
-    # Drift safety: block P3 output if P1 exit incomplete
     if task == "SITE_COPY_BUILD" and not state.get("p1_exit_complete", False):
         return (
             "A) P1 + US\n"
@@ -315,17 +299,14 @@ def validate_model_output(user_text: str, model_text: str, state: dict, expected
             + "H) NEXT STEP: N/A\n"
         )
 
-    # Competitor research exempt from claims policing
     if task == "COMPETITOR_RESEARCH":
         return model_text
 
-    # UNA-facing enforcement only
     una_facing = task in ["BRAND_NARRATIVE", "SITE_COPY_BUILD"] or bool(
         re.search(r"\b(hero sku|hero product|sku|homepage|landing page|copy|brand architecture)\b", (user_text or "").lower())
     )
 
     if una_facing:
-        # Claim boundaries gate (unless drafting boundaries)
         if task in ["BRAND_NARRATIVE", "SITE_COPY_BUILD"] and not state.get("claim_boundaries_approved", False):
             if not re.search(r"\bclaim boundaries\b|\ballowed\b|\bforbidden\b", (user_text or "").lower()):
                 return (
@@ -362,10 +343,10 @@ def validate_model_output(user_text: str, model_text: str, state: dict, expected
     return model_text
 
 # ==========================================
-# SYSTEM INSTRUCTIONS (ANTI-ECHO + MULTI-FILE)
+# SYSTEM INSTRUCTIONS
 # ==========================================
 SYSTEM_INSTRUCTIONS = """
-🏛️ UNA Master Governance: The Fortress Directive (OS v20.1 – Multi-file + State Update)
+🏛️ UNA Master Governance: The Fortress Directive (OS v20.2 – Multi-file + State Update)
 👤 SYSTEM ROLE & IDENTITY: "DAVID"
 You are David. Role: Chief of Staff & Executive Gateway.
 
@@ -738,7 +719,7 @@ def run_model_once(chat_obj, content_parts: List[str]) -> str:
     return out
 
 # ==========================================
-# MAIN CHAT (model created per request for fresh system_instruction)
+# MAIN CHAT
 # ==========================================
 google_chat = client.chats.create(
     model=ACTIVE_MODEL_NAME,
@@ -799,7 +780,7 @@ if active_chat:
         governance["phase"] = forced_phase or governance.get("phase", "P1")
         governance["step"] = forced_step or governance.get("step", "S0")
 
-        # Deterministic state update response (no model) — fixes deadlock permanently
+        # Deterministic state update response (no model)
         if task == "STATE_UPDATE":
             full_response = (
                 "A) P1 + US\n"
@@ -857,14 +838,12 @@ OUTPUT_MUST_MATCH_OUTPUT_FORMAT_STRICT.
             f"<USER_QUERY>\n{user_input}\n</USER_QUERY>",
         ]
 
-        # Append text file contexts last (internal)
         for asset in st.session_state.active_file_payloads:
             if asset.get("type") == "text":
                 final_content.append(asset.get("content", ""))
 
         with st.chat_message("assistant", avatar="✨"):
             message_placeholder = st.empty()
-            full_response = ""
 
             # Pass 1
             try:
@@ -908,8 +887,9 @@ Re-run the response with the required per-file structure.
                         message_placeholder.error(f"David is overloaded. (Error: {inner_e})")
                         st.stop()
 
+            # FIX: use correct parameter name user_text=
             full_response = validate_model_output(
-                user_input=user_input,
+                user_text=user_input,
                 model_text=full_response,
                 state=governance,
                 expected_files_used=expected_used,
@@ -917,7 +897,7 @@ Re-run the response with the required per-file structure.
             )
             message_placeholder.markdown(full_response)
 
-        # Conservative state advancement (kept; no longer required for S1→S2 unlock)
+        # Optional legacy state advancement hooks
         if re.search(r"\bapprove\b.*\b(S1|narrative|usp|voice|claim boundaries)\b", user_input.lower()):
             governance["p1_s1_approved"] = True
             governance["claim_boundaries_approved"] = True
