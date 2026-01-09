@@ -23,21 +23,61 @@ POLLINATIONS_API_KEY = "sk_yNHgkvTQpFMr5J0PMkGtDkgABITMT3kL"
 # ==========================================
 # GOVERNANCE PATCH (HARD ENFORCEMENT IN CODE)
 # ==========================================
-PHASES_ORDER = ["P1", "P2", "P3", "P4", "P5", "P6", "P7"]
-
 DEFAULT_STATE = {
     "phase": "P1",
     "step": "S0",
     "p1_s1_approved": False,
     "p1_exit_complete": False,
     "claim_boundaries_approved": False,
+    # Optional: track whether P2 framework exists; not required for enforcement
+    "p2_framework_started": False,
 }
+
+# --- Regulatory routing (PERMANENT FIX) ---
+# P2 framework is ALLOWED.
+# P2 execution/approval/legal-opinion is VETOED.
+REG_FRAMEWORK_HINTS = [
+    r"\bframework\b", r"\bguardrails\b", r"\brequirements\b", r"\bmatrix\b",
+    r"\bdisclosure\b", r"\b(inci|ingredient)\b", r"\bpackaging elements\b",
+    r"\bmandatory\b", r"\bstop-ship\b", r"\brisk triggers\b", r"\bgovernance\b",
+    r"\blabel(ing)?\b", r"\bformat(ting)?\b", r"\blegibility\b", r"\bplacement logic\b",
+    r"\bjurisdiction scope\b", r"\b(ftc|fda)\b.*\b(high-level|principle|overview)\b",
+]
+REG_EXECUTION_HINTS = [
+    r"\bapprove\b", r"\bcertif(y|ication)\b", r"\bguarantee\b", r"\bensure compliance\b",
+    r"\blegal advice\b", r"\blegal opinion\b", r"\bcounsel\b", r"\blawyer\b",
+    r"\bfil(e|ing|ings)\b", r"\bsubmit\b", r"\bregister\b", r"\bnotification\b",
+    r"\bcomplaint\b", r"\benforcement\b", r"\bregulator\b", r"\baud(it|itor)\b",
+    r"\bcase law\b", r"\bjurisdictional ruling\b", r"\bvalidate claims\b",
+    r"\bcompliant\b.*\b(certified|approved|guaranteed)\b",
+]
+REG_P2_TRIGGER = r"\b(p2|regulatory|compliance|packaging|label(ing)?|claims matrix|inci)\b"
+
+def is_regulatory_framework(user_text: str) -> bool:
+    t = (user_text or "").lower()
+    if re.search(REG_P2_TRIGGER, t):
+        if any(re.search(p, t) for p in REG_EXECUTION_HINTS):
+            return False
+        # Default allow: if user is in the regulatory domain and not requesting execution,
+        # treat as framework/guardrails/requirements.
+        return True
+    return False
+
+def is_regulatory_execution(user_text: str) -> bool:
+    t = (user_text or "").lower()
+    return bool(re.search(REG_P2_TRIGGER, t) and any(re.search(p, t) for p in REG_EXECUTION_HINTS))
 
 def route_task(user_text: str) -> str:
     t = (user_text or "").lower()
 
     if re.search(r"\bexecute a state update\b", t):
         return "STATE_UPDATE"
+
+    # P2 permanent fix routing
+    if is_regulatory_execution(user_text):
+        return "REGULATORY_EXECUTION"
+    if is_regulatory_framework(user_text):
+        return "REGULATORY_FRAMEWORK"
 
     if re.search(r"\b(research|competitor|competitive|market|brands?|benchmark|audit|landscape)\b", t):
         return "COMPETITOR_RESEARCH"
@@ -67,6 +107,10 @@ def required_phase_step_for_task(task: str) -> Tuple[Optional[str], Optional[str
         return ("P5", None)
     if task == "STATE_UPDATE":
         return ("P1", "S1")
+    if task == "REGULATORY_FRAMEWORK":
+        return ("P2", "S0")
+    if task == "REGULATORY_EXECUTION":
+        return ("P2", "S0")
     return (None, None)
 
 def veto_packet(authority: str, violated_rule: str, allowed_work: str = "NONE") -> str:
@@ -94,20 +138,41 @@ def enforce_gates(user_text: str, state: dict) -> Tuple[Optional[str], str, str,
     task = route_task(user_text)
     req_phase, req_step = required_phase_step_for_task(task)
 
+    # --- P2 permanent fix enforcement ---
+    if task == "REGULATORY_EXECUTION":
+        return (
+            veto_packet(
+                authority="Arthur (Legal) + Dr. Corinne (Regulatory)",
+                violated_rule="Requested regulatory approval/execution/legal opinion/certification. This is restricted.",
+                allowed_work="P2 framework only: guardrails, requirements, matrices, stop-ship triggers (no approvals, no legal advice, no filings)."
+            ),
+            state.get("phase", "P1"),
+            state.get("step", "S0"),
+            task
+        )
+
+    if task == "REGULATORY_FRAMEWORK":
+        # Always allow P2 framework work (no veto), regardless of P1 exit.
+        # It’s governance/requirements, not execution.
+        state["p2_framework_started"] = True
+        return (None, "P2", "S0", task)
+
+    # Launch gating
     if task == "LAUNCH":
         if not state.get("p1_exit_complete", False):
             return (
                 veto_packet(
                     authority="Phase Router",
                     violated_rule="Launch requested before completion of prerequisite exit criteria (P1–P4).",
-                    allowed_work="Remain in current phase; complete P1 exit criteria."
+                    allowed_work="Remain in current phase; complete prerequisites."
                 ),
-                state["phase"],
-                state["step"],
+                state.get("phase", "P1"),
+                state.get("step", "S0"),
                 task
             )
         return (None, "P5", state.get("step", "S0"), task)
 
+    # P3 gating
     if task == "SITE_COPY_BUILD":
         if not state.get("p1_exit_complete", False):
             return (
@@ -116,12 +181,13 @@ def enforce_gates(user_text: str, state: dict) -> Tuple[Optional[str], str, str,
                     violated_rule="Attempted P3 execution before P1 exit criteria (Brand Kit complete).",
                     allowed_work="P1 only: finish S1–S5 and mark exit complete."
                 ),
-                state["phase"],
-                state["step"],
+                state.get("phase", "P1"),
+                state.get("step", "S0"),
                 task
             )
         return (None, "P3", "S4", task)
 
+    # P1 narrative gating
     if task == "BRAND_NARRATIVE":
         if re.search(r"\b(claim boundaries|claims classifier|allowed|forbidden)\b", (user_text or "").lower()):
             return (None, "P1", "S1", task)
@@ -133,8 +199,8 @@ def enforce_gates(user_text: str, state: dict) -> Tuple[Optional[str], str, str,
                     violated_rule="UNA-facing copy requested without approved claim boundaries.",
                     allowed_work="P1/S1: establish claim boundaries + luxury voice first."
                 ),
-                state["phase"],
-                state["step"],
+                state.get("phase", "P1"),
+                state.get("step", "S0"),
                 task
             )
         return (None, "P1", "S1", task)
@@ -148,8 +214,8 @@ def enforce_gates(user_text: str, state: dict) -> Tuple[Optional[str], str, str,
                     violated_rule="Attempted P1/S2 before P1/S1 exit criteria satisfied (Narrative/USP/Voice/Claim Boundaries).",
                     allowed_work="P1/S1 only."
                 ),
-                state["phase"],
-                state["step"],
+                state.get("phase", "P1"),
+                state.get("step", "S0"),
                 task
             )
         return (None, "P1", "S2", task)
@@ -157,7 +223,7 @@ def enforce_gates(user_text: str, state: dict) -> Tuple[Optional[str], str, str,
     if task == "COMPETITOR_RESEARCH":
         return (None, "P1", "S0", task)
 
-    return (None, req_phase or state["phase"], req_step or state["step"], task)
+    return (None, req_phase or state.get("phase", "P1"), req_step or state.get("step", "S0"), task)
 
 # ==========================================
 # CLAIMS / PERFORMANCE (UNA-FACING ONLY)
@@ -166,7 +232,6 @@ BANNED_UNA_CLAIMS = [
     r"\bcure\b", r"\btreat\b", r"\bheal\b", r"\brepair\b", r"\bprevent\b",
     r"\bacne\b", r"\bspf\b", r"\bcollagen\b", r"\bbarrier repair\b",
 ]
-
 RISKY_PERFORMANCE_PHRASES = [
     r"\breduces (the )?appearance of fine lines\b",
     r"\bimproves elasticity\b",
@@ -189,10 +254,7 @@ def violates_performance(text: str) -> bool:
 # ==========================================
 # FILE_CONTEXT ANTI-ECHO + FILE INTEGRITY
 # ==========================================
-FILE_CONTEXT_BLOCK_RE = re.compile(
-    r"<FILE_CONTEXT\b[^>]*>.*?</FILE_CONTEXT>",
-    flags=re.DOTALL | re.IGNORECASE
-)
+FILE_CONTEXT_BLOCK_RE = re.compile(r"<FILE_CONTEXT\b[^>]*>.*?</FILE_CONTEXT>", flags=re.DOTALL | re.IGNORECASE)
 
 def redact_file_context_blocks(text: str) -> str:
     if not text:
@@ -219,20 +281,12 @@ def expected_files_used_line(active_file_payloads: List[Dict]) -> str:
 def inject_files_used_line(model_text: str, expected: str) -> str:
     if model_text is None:
         model_text = ""
-
     if re.search(r"^FILES_USED:\s*.*$", model_text, flags=re.IGNORECASE | re.MULTILINE):
-        return re.sub(
-            r"^FILES_USED:\s*.*$",
-            f"FILES_USED: {expected}",
-            model_text,
-            flags=re.IGNORECASE | re.MULTILINE
-        )
-
+        return re.sub(r"^FILES_USED:\s*.*$", f"FILES_USED: {expected}", model_text, flags=re.IGNORECASE | re.MULTILINE)
     m = re.search(r"(^F\)\s*ARTIFACTS.*?$)", model_text, flags=re.IGNORECASE | re.MULTILINE)
     if m:
         insert_at = m.end()
         return model_text[:insert_at] + "\n" + f"FILES_USED: {expected}\n" + model_text[insert_at:]
-
     return f"F) ARTIFACTS\nFILES_USED: {expected}\n\n" + model_text
 
 # ==========================================
@@ -283,6 +337,39 @@ def validate_model_output(user_text: str, model_text: str, state: dict, expected
     if task == "STATE_UPDATE":
         return model_text
 
+    # P2 framework: explicitly exempt from “legal veto” behavior
+    # Only enforce: no legal advice, no filings, no “guaranteed compliant” language.
+    if task == "REGULATORY_FRAMEWORK":
+        t = (model_text or "").lower()
+        hard_no = [
+            r"\blegal advice\b",
+            r"\blegal opinion\b",
+            r"\bthis is compliant\b",
+            r"\bguaranteed compliant\b",
+            r"\bcertified\b",
+            r"\bapproved by\b",
+            r"\bfile\b.*\bwith\b",
+            r"\bsubmit\b.*\bto\b",
+            r"\bregister\b.*\bwith\b",
+        ]
+        if any(re.search(p, t) for p in hard_no):
+            return (
+                "A) P2 + US\n"
+                "B) SYSTEM CHECK: PASS\n"
+                + veto_packet(
+                    authority="Arthur (Legal)",
+                    violated_rule="P2 framework output drifted into legal advice / approvals / filings.",
+                    allowed_work="Rewrite as internal requirements/guardrails only. No approvals, no filings, no guarantees."
+                )
+                + "D) CURRENT STEP: P2 / S0 + GOAL: Compliance framework (guardrails only)\n"
+                + "E) ACTIONS: NONE\n"
+                + "F) ARTIFACTS: NONE\n"
+                + "G) EXIT CRITERIA: N/A\n"
+                + "H) NEXT STEP: P2 (LOCKED)\n"
+            )
+        return model_text
+
+    # Drift safety: block P3 output if P1 exit incomplete
     if task == "SITE_COPY_BUILD" and not state.get("p1_exit_complete", False):
         return (
             "A) P1 + US\n"
@@ -299,6 +386,7 @@ def validate_model_output(user_text: str, model_text: str, state: dict, expected
             + "H) NEXT STEP: N/A\n"
         )
 
+    # Competitor research exempt from UNA-claims policing
     if task == "COMPETITOR_RESEARCH":
         return model_text
 
@@ -346,7 +434,7 @@ def validate_model_output(user_text: str, model_text: str, state: dict, expected
 # SYSTEM INSTRUCTIONS
 # ==========================================
 SYSTEM_INSTRUCTIONS = """
-🏛️ UNA Master Governance: The Fortress Directive (OS v20.2 – Multi-file + State Update)
+🏛️ UNA Master Governance: The Fortress Directive (OS v20.3 – P2 Framework Allowed)
 👤 SYSTEM ROLE & IDENTITY: "DAVID"
 You are David. Role: Chief of Staff & Executive Gateway.
 
@@ -354,12 +442,13 @@ HARD RULES:
 - NEVER output or quote <FILE_CONTEXT> blocks. They are private internal context.
 - The system injects FILES_USED. Do not attempt to repeat file contents.
 
+P2 PERMANENT POLICY:
+- P2 "framework/guardrails/requirements" work is ALLOWED.
+- P2 "approvals/legal opinions/filings/certifications/guarantees" is VETOED.
+
 CLAIMS:
 - Competitor research may quote competitor claims.
 - UNA-facing copy must obey appearance-only language unless claim boundaries are approved.
-
-PHASE:
-- Do NOT advance phases/steps without explicit exit criteria satisfied in-conversation.
 
 OUTPUT FORMAT (STRICT)
 A) PHASE + JURISDICTION
@@ -610,7 +699,7 @@ if active_chat:
 # ==========================================
 with st.sidebar:
     st.title("✨ UNA OS")
-    st.caption(f"v20.2 | {ACTIVE_MODEL_NAME}")
+    st.caption(f"v20.4 | {ACTIVE_MODEL_NAME}")
 
     c1, c2 = st.columns([0.7, 0.3])
     with c1:
@@ -704,7 +793,10 @@ with st.sidebar:
     if st.session_state.active_file_payloads:
         st.markdown("**Active Memory (with integrity):**")
         for a in st.session_state.active_file_payloads:
-            st.code(f"{a['name']}  sha256_8={a['sha256_8']}  bytes={a['nbytes']}  type={a['type']}", language="text")
+            st.code(
+                f"{a['name']}  sha256_8={a['sha256_8']}  bytes={a['nbytes']}  type={a['type']}",
+                language="text",
+            )
     else:
         st.info("No active files.")
 
@@ -821,10 +913,19 @@ HARD_CONSTRAINTS:
 - NEVER output or quote <FILE_CONTEXT> blocks.
 - The system injects FILES_USED. Do not dump file contents.
 - Do NOT change phase/step.
-- If ENFORCED_STEP=S0: competitor research only. No UNA narrative.
-- If ENFORCED_STEP=S1: analysis + frameworks only. No marketing copy.
-- If ENFORCED_STEP=S2: brand architecture only. No pricing. No marketing copy. No claims.
-- If ENFORCED_PHASE=P3: only allowed if prerequisites satisfied.
+
+PHASE RULES:
+- If ENFORCED_PHASE=P2 and TASK=REGULATORY_FRAMEWORK:
+  ALLOW framework/guardrails/requirements only (no legal advice, no approvals, no filings, no guarantees).
+
+- If ENFORCED_STEP=S0 and ENFORCED_PHASE=P1:
+  competitor research only. No UNA narrative.
+
+- If ENFORCED_STEP=S1:
+  analysis + frameworks only. No marketing copy.
+
+- If ENFORCED_STEP=S2:
+  brand architecture only. No pricing. No marketing copy. No claims.
 
 OUTPUT_MUST_MATCH_OUTPUT_FORMAT_STRICT.
 </TASK_ROUTER>
@@ -887,7 +988,6 @@ Re-run the response with the required per-file structure.
                         message_placeholder.error(f"David is overloaded. (Error: {inner_e})")
                         st.stop()
 
-            # FIX: use correct parameter name user_text=
             full_response = validate_model_output(
                 user_text=user_input,
                 model_text=full_response,
