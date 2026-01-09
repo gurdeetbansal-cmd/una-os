@@ -51,6 +51,10 @@ def route_task(user_text: str) -> str:
     if re.search(r"\b(build|implement|code|bug|error|stack|repo|deploy|streamlit|next\.js)\b", t):
         return "BUILD_TECH"
 
+    # Explicit state update command (user-driven)
+    if re.search(r"\bexecute a state update\b", t):
+        return "STATE_UPDATE"
+
     return "GENERAL"
 
 def required_phase_step_for_task(task: str) -> Tuple[Optional[str], Optional[str]]:
@@ -62,6 +66,8 @@ def required_phase_step_for_task(task: str) -> Tuple[Optional[str], Optional[str
         return ("P3", "S4")
     if task == "LAUNCH":
         return ("P5", None)
+    if task == "STATE_UPDATE":
+        return ("P1", "S1")
     return (None, None)
 
 def veto_packet(authority: str, violated_rule: str, allowed_work: str = "NONE") -> str:
@@ -73,6 +79,19 @@ def veto_packet(authority: str, violated_rule: str, allowed_work: str = "NONE") 
     )
 
 def enforce_gates(user_text: str, state: dict) -> Tuple[Optional[str], str, str, str]:
+    """
+    Returns: (veto_text_or_none, forced_phase, forced_step, task)
+    """
+
+    # 🔓 SYSTEM OVERRIDE: Explicit state mutation command (MUST RUN BEFORE ANY OTHER GATES)
+    if re.search(r"\bexecute a state update\b", (user_text or "").lower()):
+        state["p1_s1_approved"] = True
+        state["claim_boundaries_approved"] = True
+        state["p1_exit_complete"] = True
+        state["phase"] = "P1"
+        state["step"] = "S1"
+        return (None, "P1", "S1", "STATE_UPDATE")
+
     task = route_task(user_text)
     req_phase, req_step = required_phase_step_for_task(task)
 
@@ -121,7 +140,8 @@ def enforce_gates(user_text: str, state: dict) -> Tuple[Optional[str], str, str,
             )
         return (None, "P1", "S1", task)
 
-    if re.search(r"\b(hero sku|hero product|sku|pricing|price point)\b", (user_text or "").lower()):
+    # P1/S2 gate
+    if re.search(r"\b(hero sku|hero product|sku|pricing|price point|brand architecture)\b", (user_text or "").lower()):
         if not state.get("p1_s1_approved", False):
             return (
                 veto_packet(
@@ -243,7 +263,6 @@ def build_multifile_directive(file_names: List[str]) -> str:
         return "<MULTIFILE_DIRECTIVE>NO_FILES</MULTIFILE_DIRECTIVE>"
 
     bullets = "\n".join([f"- {fn}" for fn in file_names])
-    # Required headings force the model to touch each file
     required_headings = "\n".join([f"## {fn}" for fn in file_names])
 
     return f"""
@@ -276,6 +295,9 @@ def validate_model_output(user_text: str, model_text: str, state: dict, expected
     model_text = redact_file_context_blocks(model_text)
     model_text = inject_files_used_line(model_text, expected_files_used)
 
+    if task == "STATE_UPDATE":
+        return model_text
+
     # Drift safety: block P3 output if P1 exit incomplete
     if task == "SITE_COPY_BUILD" and not state.get("p1_exit_complete", False):
         return (
@@ -299,7 +321,7 @@ def validate_model_output(user_text: str, model_text: str, state: dict, expected
 
     # UNA-facing enforcement only
     una_facing = task in ["BRAND_NARRATIVE", "SITE_COPY_BUILD"] or bool(
-        re.search(r"\b(hero sku|hero product|sku|homepage|landing page|copy)\b", (user_text or "").lower())
+        re.search(r"\b(hero sku|hero product|sku|homepage|landing page|copy|brand architecture)\b", (user_text or "").lower())
     )
 
     if una_facing:
@@ -343,7 +365,7 @@ def validate_model_output(user_text: str, model_text: str, state: dict, expected
 # SYSTEM INSTRUCTIONS (ANTI-ECHO + MULTI-FILE)
 # ==========================================
 SYSTEM_INSTRUCTIONS = """
-🏛️ UNA Master Governance: The Fortress Directive (OS v20.0 – Multi-file Coverage)
+🏛️ UNA Master Governance: The Fortress Directive (OS v20.1 – Multi-file + State Update)
 👤 SYSTEM ROLE & IDENTITY: "DAVID"
 You are David. Role: Chief of Staff & Executive Gateway.
 
@@ -607,7 +629,7 @@ if active_chat:
 # ==========================================
 with st.sidebar:
     st.title("✨ UNA OS")
-    st.caption(f"v20.0 | {ACTIVE_MODEL_NAME}")
+    st.caption(f"v20.2 | {ACTIVE_MODEL_NAME}")
 
     c1, c2 = st.columns([0.7, 0.3])
     with c1:
@@ -716,7 +738,7 @@ def run_model_once(chat_obj, content_parts: List[str]) -> str:
     return out
 
 # ==========================================
-# MAIN CHAT
+# MAIN CHAT (model created per request for fresh system_instruction)
 # ==========================================
 google_chat = client.chats.create(
     model=ACTIVE_MODEL_NAME,
@@ -754,6 +776,7 @@ if active_chat:
         governance = active_chat.get("governance", DEFAULT_STATE.copy())
         veto_text, forced_phase, forced_step, task = enforce_gates(user_input, governance)
 
+        # Hard veto response (no model)
         if veto_text:
             full_response = (
                 f"A) {governance.get('phase','P1')} + US\n"
@@ -772,8 +795,34 @@ if active_chat:
             save_ledger(st.session_state.all_chats)
             st.stop()
 
-        governance["phase"] = forced_phase or governance["phase"]
-        governance["step"] = forced_step or governance["step"]
+        # Apply forced phase/step
+        governance["phase"] = forced_phase or governance.get("phase", "P1")
+        governance["step"] = forced_step or governance.get("step", "S0")
+
+        # Deterministic state update response (no model) — fixes deadlock permanently
+        if task == "STATE_UPDATE":
+            full_response = (
+                "A) P1 + US\n"
+                "B) SYSTEM CHECK: PASS\n"
+                "C) RISK CLASS: LOW | IRON DOME CHECK: PASS\n"
+                "D) CURRENT STEP: P1 / S1 + GOAL: Close S1 and authorize S2\n"
+                "E) ACTIONS:\n"
+                "- STATE MUTATION: p1_s1_approved=TRUE\n"
+                "- STATE MUTATION: claim_boundaries_approved=TRUE\n"
+                "- STATE MUTATION: p1_exit_complete=TRUE\n"
+                "F) ARTIFACTS:\n"
+                "- FILES_USED: NONE\n"
+                "G) EXIT CRITERIA:\n"
+                "- P1 / S1 — COMPLETE\n"
+                "H) NEXT STEP (LOCKED):\n"
+                "- P1 / S2 — AUTHORIZED\n"
+            )
+            with st.chat_message("assistant", avatar="✨"):
+                st.markdown(full_response)
+            active_chat["messages"].append({"role": "assistant", "content": full_response})
+            active_chat["governance"] = governance
+            save_ledger(st.session_state.all_chats)
+            st.stop()
 
         manifest = build_file_manifest(st.session_state.active_file_payloads)
         expected_used = expected_files_used_line(st.session_state.active_file_payloads)
@@ -793,6 +842,7 @@ HARD_CONSTRAINTS:
 - Do NOT change phase/step.
 - If ENFORCED_STEP=S0: competitor research only. No UNA narrative.
 - If ENFORCED_STEP=S1: analysis + frameworks only. No marketing copy.
+- If ENFORCED_STEP=S2: brand architecture only. No pricing. No marketing copy. No claims.
 - If ENFORCED_PHASE=P3: only allowed if prerequisites satisfied.
 
 OUTPUT_MUST_MATCH_OUTPUT_FORMAT_STRICT.
@@ -807,11 +857,10 @@ OUTPUT_MUST_MATCH_OUTPUT_FORMAT_STRICT.
             f"<USER_QUERY>\n{user_input}\n</USER_QUERY>",
         ]
 
-        # Append file contexts last (internal)
-        if st.session_state.active_file_payloads:
-            for asset in st.session_state.active_file_payloads:
-                if asset.get("type") == "text":
-                    final_content.append(asset.get("content", ""))
+        # Append text file contexts last (internal)
+        for asset in st.session_state.active_file_payloads:
+            if asset.get("type") == "text":
+                final_content.append(asset.get("content", ""))
 
         with st.chat_message("assistant", avatar="✨"):
             message_placeholder = st.empty()
@@ -860,15 +909,15 @@ Re-run the response with the required per-file structure.
                         st.stop()
 
             full_response = validate_model_output(
-                user_input,
-                full_response,
-                governance,
+                user_input=user_input,
+                model_text=full_response,
+                state=governance,
                 expected_files_used=expected_used,
                 task=task,
             )
             message_placeholder.markdown(full_response)
 
-        # Conservative state advancement (unchanged)
+        # Conservative state advancement (kept; no longer required for S1→S2 unlock)
         if re.search(r"\bapprove\b.*\b(S1|narrative|usp|voice|claim boundaries)\b", user_input.lower()):
             governance["p1_s1_approved"] = True
             governance["claim_boundaries_approved"] = True
