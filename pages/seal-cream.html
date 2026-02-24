@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Seal Cream — UNA</title>
+  <link rel="stylesheet" href="../styles/style.min.css">
+  <script src="https://sdks.shopifycdn.com/buy-button/latest/buy-button-storefront.min.js" defer></script>
+  <script src="../scripts/dist/shopify-config.js" defer></script>
+  <script src="../scripts/dist/smooth-scroll.min.js" defer></script>
+  <script src="../scripts/dist/header-scroll.min.js" defer></script>
+  <script src="../scripts/dist/drawer-menu.min.js" defer></script>
+  <script src="../scripts/dist/cart-drawer.min.js" defer></script>
+  <script src="../scripts/dist/lazy-load.min.js" defer></script>
+  <script src="../scripts/dist/shopify-una.js" defer></script>
+</head>
+<body>
+  <header class="site-header">
+    <div class="site-header__left">
+      <button type="button" class="menu-btn" aria-label="Open menu" aria-expanded="false" aria-controls="drawer-menu">
+        <span class="menu-btn__line"></span>
+        <span class="menu-btn__line"></span>
+        <span class="menu-btn__line"></span>
+      </button>
+      <a href="../index.html" class="site-header__logo">UNA</a>
+    </div>
+    <div class="site-header__right">
+      <nav>
+        <ul class="site-header__nav">
+          <li><a href="architecture.html">The Architecture System</a></li>
+          <li><a href="products.html">Products</a></li>
+          <li><a href="founders.html">Founders Circle</a></li>
+          <li><a href="journal.html">Journal</a></li>
+          <li><a href="about.html">About</a></li>
+          <li>
+            <a href="#" class="header-cart-icon" id="cart-toggle" aria-label="Shopping cart">
+              <span class="cart-count" aria-hidden="true">0</span>
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+                <path d="M8 22a1 1 0 1 0 0-2 1 1 0 0 0 0 2ZM20 22a1 1 0 1 0 0-2 1 1 0 0 0 0 2ZM3 3h2l.5 2m0 0L8 16h12l3-9H6.5L6 5ZM8 16l-2-6" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+              </svg>
+            </a>
+          </li>
+        </ul>
+      </nav>
+    </div>
+  </header>
+
+  <div class="drawer-overlay" id="drawer-overlay" aria-hidden="true"></div>
+  <aside class="drawer" id="drawer-menu" aria-label="Main navigation" aria-hidden="true">
+    <button type="button" class="drawer__close" aria-label="Close menu" id="drawer-close"></button>
+    <nav class="drawer__nav">
+      <ul class="drawer__list">
+        <li><a href="architecture.html">The Architecture System</a></li>
+        <li><a href="products.html">Products</a></li>
+        <li><a href="founders.html">Founders Circle</a></li>
+        <li><a href="journal.html">Journal</a></li>
+        <li><a href="about.html">About</a></li>
+      </ul>
+    </nav>
+    <div class="drawer__footer">
+      <hr class="drawer__separator">
+      <a href="#" class="drawer__footer-link">Sustainability</a>
+      <p class="drawer__ship-to">Ship to: <a href="location.html" id="drawer-country-link">United States</a></p>
+    </div>
+  </aside>
+
+  <div class="cart-overlay" id="cart-overlay" aria-hidden="true"></div>
+  <aside class="cart-drawer" id="cart-drawer" aria-label="Shopping bag" aria-hidden="true">
+    <div class="cart-drawer__header">
+      <h2 class="cart-drawer__title">SHOPPING BAG</h2>
+      <button type="button" class="cart-drawer__close" id="cart-close" aria-label="Close cart"></button>
+    </div>
+    <div class="cart-drawer__items">
+      <div class="cart-drawer__empty-state">
+        <p class="cart-drawer__empty">Your shopping bag is empty.</p>
+        <a href="products.html" class="cart-drawer__start-shopping">Start Shopping</a>
+      </div>
+    </div>
+    <div class="cart-drawer__footer">
+      <p class="cart-drawer__subtotal">Subtotal: <span>$0.00</span></p>
+      <button type="button" class="cart-drawer__checkout">Checkout</button>
+    </div>
+  </aside>
+
+  <div class="product-container">
+    <aside class="product-gallery">
+      <div class="product-gallery__main" aria-hidden="true">
+        <img src="../assets/products/seal/cream_bottle.webp" alt="Seal Cream" width="900" height="1100" fetchpriority="high" loading="eager" />
+      </div>
+      <div class="product-gallery__thumbs">
+        <button type="button" class="product-gallery__thumb product-gallery__thumb--active" aria-label="View image 1">
+          <img src="../assets/products/seal/cream_bottle.webp" alt="" width="96" height="120" loading="lazy" />
+        </button>
+        <button type="button" class="product-gallery__thumb" aria-label="View image 2">
+          <img src="../assets/products/seal/cream_bottle.webp" alt="" width="96" height="120" loading="lazy" />
+        </button>
+        <button type="button" class="product-gallery__thumb" aria-label="View image 3">
+          <img src="../assets/products/seal/cream_bottle.webp" alt="" width="96" height="120" loading="lazy" />
+        </button>
+        <button type="button" class="product-gallery__thumb" aria-label="View image 4">
+          <img src="../assets/products/seal/cream_bottle.webp" alt="" width="96" height="120" loading="lazy" />
+        </button>
+      </div>
+    </aside>
+
+    <main class="product-info">
+      <div class="sticky-inner">
+        <p class="product-info__category">Skincare</p>
+        <h1 class="product-info__title">Seal Cream</h1>
+        <p class="product-info__price">$0.00</p>
+        <p class="product-info__description">
+          A rich, nourishing moisturizer that seals in hydration and strengthens the skin barrier. Helps prevent moisture loss and leaves skin soft and supple. The final step in your routine to lock in the benefits of your serum and cleanser.
+        </p>
+        <div class="product-info__actions">
+          <button type="button" class="product-info__btn product-info__btn--pill una-add-to-cart" data-shopify-variant-id="15298501804409">Add to Bag</button>
+          <button type="button" class="product-info__btn product-info__btn--secondary">Wishlist</button>
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <div class="product-modules">
+    <section class="product-module" id="how-to-use">
+      <h2 class="product-module__title">How to use</h2>
+      <div class="product-module__content">
+        <p>After Reset and Signal, take a pearl-sized amount and massage into face and neck until absorbed. Use morning and evening as the final step.</p>
+      </div>
+    </section>
+    <section class="product-module" id="proof">
+      <h2 class="product-module__title">Proof (Quiet)</h2>
+      <div class="product-module__content">
+        <p>Dermatologist-tested. Non-comedogenic. Formulated without parabens, sulfates, or synthetic fragrances.</p>
+      </div>
+    </section>
+    <section class="product-module" id="ingredients">
+      <h2 class="product-module__title">Ingredients (INCI)</h2>
+      <div class="product-module__content">
+        <p class="product-module__inci">Aqua, Glycerin, Butyrospermum Parkii Butter, Cetearyl Alcohol, Caprylic/Capric Triglyceride, Squalane, Ceramide NP, Tocopherol, Xanthan Gum, Citric Acid, Phenoxyethanol, Ethylhexylglycerin.</p>
+      </div>
+    </section>
+  </div>
+
+  <section class="product-key-ingredients">
+    <h2 class="product-key-ingredients__title">Key Ingredients</h2>
+    <div class="product-key-ingredients__grid">
+      <div class="product-key-ingredients__item"><span class="product-key-ingredients__name">Ceramides</span><span class="product-key-ingredients__desc">Barrier support</span></div>
+      <div class="product-key-ingredients__item"><span class="product-key-ingredients__name">Shea Butter</span><span class="product-key-ingredients__desc">Nourishes and softens</span></div>
+      <div class="product-key-ingredients__item"><span class="product-key-ingredients__name">Squalane</span><span class="product-key-ingredients__desc">Lightweight moisture</span></div>
+    </div>
+  </section>
+
+  <footer class="site-footer">
+    <div class="site-footer__inner">
+      <div class="site-footer__col">
+        <h4>Shop</h4>
+        <ul>
+          <li><a href="new-arrivals.html">New Arrivals</a></li>
+          <li><a href="bestsellers.html">Bestsellers</a></li>
+          <li><a href="gifts.html">Gifts</a></li>
+        </ul>
+      </div>
+      <div class="site-footer__col">
+        <h4>System</h4>
+        <ul>
+          <li><a href="architecture.html">The Architecture System</a></li>
+        </ul>
+      </div>
+      <div class="site-footer__col">
+        <h4>About</h4>
+        <ul>
+          <li><a href="about.html">About</a></li>
+          <li><a href="careers.html">Careers</a></li>
+          <li><a href="stores.html">Stores</a></li>
+          <li><a href="sustainability.html">Sustainability</a></li>
+        </ul>
+      </div>
+      <div class="site-footer__col">
+        <h4>Journal</h4>
+        <ul>
+          <li><a href="journal.html">Journal</a></li>
+        </ul>
+      </div>
+      <div class="site-footer__col">
+        <h4>Support</h4>
+        <ul>
+          <li><a href="contact.html">Contact</a></li>
+          <li><a href="faqs.html">FAQs</a></li>
+          <li><a href="shipping.html">Shipping</a></li>
+          <li><a href="returns.html">Returns</a></li>
+        </ul>
+      </div>
+      <p class="site-footer__copy">&copy; UNA. All rights reserved.</p>
+    </div>
+  </footer>
+</body>
+</html>
